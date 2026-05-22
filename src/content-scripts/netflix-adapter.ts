@@ -5,6 +5,10 @@ import {
   createSubtitleResource,
 } from '../shared/subtitle-acquisition';
 import { parseTtml } from '../shared/subtitle-parser';
+import {
+  saveSourceSubtitle,
+  detectStaleTranslations,
+} from '../shared/subtitle-library';
 import { DebugOverlay } from './debug-overlay';
 
 function formatMs(ms: number): string {
@@ -184,6 +188,31 @@ export class NetflixAdapter {
       }
     }
 
+    // Save to subtitle library (Task 5.3)
+    try {
+      const targetLang = await this.getTargetLanguage();
+      await saveSourceSubtitle(resource, targetLang);
+
+      // Detect stale translations for this video (Task 5.6)
+      if (resource.contentHash) {
+        const stale = await detectStaleTranslations(
+          resource.videoId,
+          resource.sourceLanguage,
+          targetLang,
+          resource.contentHash
+        );
+        if (stale.length > 0) {
+          this.overlay.addError(`${stale.length} stale translation(s) detected`);
+        }
+      }
+
+      this.overlay.setStatus(
+        `Subtitle acquired & saved (${resource.format}, ${targetLang})`
+      );
+    } catch (saveErr) {
+      console.warn('[Netflix Translator] Library save error:', saveErr);
+    }
+
     // Forward to service worker
     chrome.runtime
       .sendMessage({
@@ -264,6 +293,18 @@ export class NetflixAdapter {
       .catch((err) => {
         this.overlay.addError('Failed to report left: ' + (err as Error).message);
       });
+  }
+
+  /**
+   * Get the currently selected target language from extension settings
+   */
+  private async getTargetLanguage(): Promise<string> {
+    try {
+      const result = await chrome.storage.local.get('targetLanguage');
+      return (result.targetLanguage as string) || 'zh-CN';
+    } catch {
+      return 'zh-CN';
+    }
   }
 
   /**
