@@ -3,7 +3,6 @@ import { extractVideoId } from '../shared/url-utils';
 import {
   validateSubtitlePayload,
   createSubtitleResource,
-  refetchSubtitle,
 } from '../shared/subtitle-acquisition';
 import { parseTtml } from '../shared/subtitle-parser';
 import { DebugOverlay } from './debug-overlay';
@@ -125,37 +124,22 @@ export class NetflixAdapter {
       // Notify callback
       this.onSubtitleCandidate?.(candidate);
 
-      // Process candidate: try re-fetch first (Task 3.3), fallback to cloned payload (Task 3.4)
+      // Process candidate: use page-world cloned payload
       this.processSubtitleCandidate(candidate);
     }) as EventListener);
   }
 
   /**
-   * Process a subtitle candidate: validate, try re-fetch, store
+   * Process a subtitle candidate: validate and store
    */
   private async processSubtitleCandidate(candidate: SubtitleCandidate): Promise<void> {
-    let payload = candidate.payload;
-    let acquisitionMethod: 'refetch' | 'page-world-clone' = 'page-world-clone';
-
-    // Try primary acquisition: re-fetch from extension context (Task 3.3)
-    try {
-      const refetched = await refetchSubtitle(candidate.url);
-      if (refetched && validateSubtitlePayload(refetched).valid) {
-        console.log('[Netflix Translator] Re-fetch succeeded');
-        payload = refetched;
-        acquisitionMethod = 'refetch';
-      } else {
-        console.log('[Netflix Translator] Re-fetch failed or invalid, using cloned payload');
-      }
-    } catch (err) {
-      console.log('[Netflix Translator] Re-fetch error, using cloned payload:', err);
-    }
+    const acquisitionMethod = 'page-world-clone';
 
     // Create subtitle resource (Task 3.2)
     const resource = await createSubtitleResource(
       candidate.url,
       candidate.contentType,
-      payload,
+      candidate.payload,
       this.currentVideoId,
       acquisitionMethod
     );
@@ -169,7 +153,7 @@ export class NetflixAdapter {
     this.overlay.addSubtitleCandidate(
       candidate.url,
       resource.format,
-      payload.length
+      candidate.payload.length
     );
     this.overlay.setStatus(
       `Subtitle acquired via ${acquisitionMethod} (${resource.format})`
@@ -178,7 +162,7 @@ export class NetflixAdapter {
     // Parse the subtitle payload (Task 4.1-4.2)
     if (resource.format === 'ttml' || resource.format === 'dfxp') {
       try {
-        const segments = parseTtml(payload);
+        const segments = parseTtml(candidate.payload);
         const firstSegments = segments.slice(0, 3).map((s) => ({
           id: s.id,
           start: formatMs(s.startMs),
