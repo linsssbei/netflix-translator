@@ -30,13 +30,13 @@
 
 ## 5. Prepared Subtitle Library
 
-- [ ] 5.1 Implement a local storage interface for subtitle metadata, preparation status, and translated subtitle artifacts
-- [ ] 5.2 Key prepared translations by video ID, source language, target language, and source subtitle hash
-- [ ] 5.3 Save source subtitle metadata and preparation status after successful subtitle acquisition
-- [ ] 5.4 Save validated translated subtitle artifacts after translation preparation succeeds
-- [ ] 5.5 Load ready translated subtitle artifacts for the active video and selected target language before rendering
-- [ ] 5.6 Detect stale translations when video ID matches but source subtitle hash differs
-- [ ] 5.7 Add tests for storage lookup, save/load behavior, missing translation handling, and stale translation detection
+- [x] 5.1 Implement a local storage interface for subtitle metadata, preparation status, and translated subtitle artifacts
+- [x] 5.2 Key prepared translations by video ID, source language, target language, and source subtitle hash
+- [x] 5.3 Save source subtitle metadata and preparation status after successful subtitle acquisition
+- [x] 5.4 Save validated translated subtitle artifacts after translation preparation succeeds
+- [x] 5.5 Load ready translated subtitle artifacts for the active video and selected target language before rendering
+- [x] 5.6 Detect stale translations when video ID matches but source subtitle hash differs
+- [x] 5.7 Add tests for storage lookup, save/load behavior, missing translation handling, and stale translation detection
 
 ## 6. One-Time Translation Preparation
 
