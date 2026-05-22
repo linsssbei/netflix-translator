@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Netflix Translator</title>
+  <link rel="stylesheet" href="./src/popup/popup.css">
+</head>
+<body>
+  <div id="app">
+    <h1>Netflix Translator</h1>
+    <p>Status: <span id="status">Loading...</span></p>
+    <div id="controls" class="hidden">
+      <label for="target-language">Target Language:</label>
+      <select id="target-language">
+        <option value="zh">Chinese (中文)</option>
+        <option value="en">English</option>
+      </select>
+      <button id="prepare-btn">Prepare Subtitles</button>
+      <button id="toggle-btn">Enable Translation</button>
+    </div>
+  </div>
+  <script type="module" src="./src/popup/popup.ts"></script>
+</body>
+</html>
