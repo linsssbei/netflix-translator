@@ -40,12 +40,12 @@
 
 ## 6. One-Time Translation Preparation
 
-- [ ] 6.1 Define the translator-agent interface for target language, segment batches, and validated translated artifact output
-- [ ] 6.2 Implement the first translation provider adapter with configurable credentials or endpoint settings
-- [ ] 6.3 Implement full-subtitle preparation that batches segments for context while preserving segment IDs, ordering, and timing
-- [ ] 6.4 Validate translation responses and reject output that changes required segment structure
-- [ ] 6.5 Record preparation success or failure in the subtitle library without disrupting Netflix playback
-- [ ] 6.6 Add tests for Chinese subtitle preparation, batch translation, response validation, and provider failure handling
+- [x] 6.1 Define the translator-agent interface for target language, segment batches, and validated translated artifact output
+- [x] 6.2 Implement the first translation provider adapter with configurable credentials or endpoint settings
+- [x] 6.3 Implement full-subtitle preparation that batches segments for context while preserving segment IDs, ordering, and timing
+- [x] 6.4 Validate translation responses and reject output that changes required segment structure
+- [x] 6.5 Record preparation success or failure in the subtitle library without disrupting Netflix playback
+- [x] 6.6 Add tests for Chinese subtitle preparation, batch translation, response validation, and provider failure handling
 
 ## 7. Playback Rendering From Saved Translation
 
