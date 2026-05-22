@@ -23,10 +23,10 @@
 
 ## 4. Subtitle Parsing And Normalization
 
-- [ ] 4.1 Implement parser support for the first real Netflix subtitle format discovered during the acquisition check
-- [ ] 4.2 Normalize parsed subtitles into ordered segments with stable ID, start time, end time, and source text
-- [ ] 4.3 Implement cleaned translation input generation that removes unnecessary styling and metadata
-- [ ] 4.4 Add fixture tests for parsing success, unsupported format handling, malformed payload handling, and cleaned input generation
+- [x] 4.1 Implement parser support for the first real Netflix subtitle format discovered during the acquisition check
+- [x] 4.2 Normalize parsed subtitles into ordered segments with stable ID, start time, end time, and source text
+- [x] 4.3 Implement cleaned translation input generation that removes unnecessary styling and metadata
+- [x] 4.4 Add fixture tests for parsing success, unsupported format handling, malformed payload handling, and cleaned input generation
 
 ## 5. Prepared Subtitle Library
 
