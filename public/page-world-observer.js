@@ -25,6 +25,19 @@
     /\bcaption\b.*\btrack\b/i,
   ];
 
+  // Netflix internal endpoints to ignore (not actual subtitle files)
+  const NETFLIX_IGNORE_PATTERNS = [
+    /\/log\//i,
+    /\/nq\//i,
+    /\/msl\//i,
+    /\/website\//i,
+    /licensedmanifest/i,
+    /release\/metadata/i,
+    /\/api\/graphql/i,
+    /trace/i,
+    /beacon/i,
+  ];
+
   // Subtitle content types
   const SUBTITLE_CONTENT_TYPES = [
     'text/vtt',
@@ -39,9 +52,26 @@
   const SUBTITLE_EXTENSIONS = ['.vtt', '.ttml', '.srt', '.xml', '.json', '.dfxp'];
 
   /**
+   * Check if a URL is a Netflix internal endpoint to ignore
+   */
+  function shouldIgnoreUrl(url) {
+    for (let i = 0; i < NETFLIX_IGNORE_PATTERNS.length; i++) {
+      if (NETFLIX_IGNORE_PATTERNS[i].test(url)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
    * Check if a URL looks like a subtitle request
    */
   function looksLikeSubtitleUrl(url) {
+    // Skip Netflix internal APIs
+    if (shouldIgnoreUrl(url)) {
+      return false;
+    }
+    
     // Check URL patterns
     for (let i = 0; i < SUBTITLE_URL_PATTERNS.length; i++) {
       if (SUBTITLE_URL_PATTERNS[i].test(url)) {
@@ -133,6 +163,11 @@
     // Make the original request
     const response = await originalFetch.call(window, request);
 
+    // Skip Netflix internal APIs even if content type matches
+    if (shouldIgnoreUrl(url)) {
+      return response;
+    }
+    
     // Check if this looks like a subtitle request
     const contentType = response.headers.get('content-type') || '';
     const isSubtitleUrl = looksLikeSubtitleUrl(url);
@@ -182,6 +217,11 @@
       // Listen for load event to capture response
       const onLoad = function () {
         try {
+          // Skip Netflix internal APIs
+          if (shouldIgnoreUrl(requestUrl)) {
+            return;
+          }
+          
           const contentType = xhr.getResponseHeader('content-type') || '';
           const isSubtitleUrl = looksLikeSubtitleUrl(requestUrl);
           const isSubtitleContent = looksLikeSubtitleContentType(contentType);
