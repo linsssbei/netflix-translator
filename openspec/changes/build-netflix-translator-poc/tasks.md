@@ -15,9 +15,9 @@
 
 - [x] 3.1 Implement a page-world network observer for subtitle/caption/timed-text request discovery without parsing rendered subtitle DOM
 - [x] 3.2 Record subtitle candidates with video ID, source language if available, subtitle format if available, URL, request context, acquisition method, and timestamp
-- [ ] 3.3 Try primary acquisition by re-fetching the discovered subtitle text resource from the extension context
-- [ ] 3.4 Implement fallback acquisition by cloning only subtitle text responses from page-world fetch/XHR when re-fetching is blocked
-- [ ] 3.5 Validate subtitle candidates by content type, URL hints, payload shape, and parser compatibility to avoid non-subtitle resources
+- [x] 3.3 Try primary acquisition by re-fetching the discovered subtitle text resource from the extension context
+- [x] 3.4 Implement fallback acquisition by cloning only subtitle text responses from page-world fetch/XHR when re-fetching is blocked
+- [x] 3.5 Validate subtitle candidates by content type, URL hints, payload shape, and parser compatibility to avoid non-subtitle resources
 - [ ] 3.6 Manually verify on a real Netflix title that the extension can acquire one original-language subtitle payload and compute its content hash
 - [ ] 3.7 Document the observed subtitle format, acquisition method, required permissions, and whether subtitle acquisition is viable for the POC
 

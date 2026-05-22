@@ -1,5 +1,10 @@
 import type { VideoIdentity } from '../shared/types';
 import { extractVideoId } from '../shared/url-utils';
+import {
+  isValidSubtitlePayload,
+  createSubtitleResource,
+  refetchSubtitle,
+} from '../shared/subtitle-acquisition';
 
 /**
  * Raw subtitle candidate from the page-world observer
@@ -94,24 +99,71 @@ export class NetflixAdapter {
         payloadSize: candidate.payload.length,
       });
 
+      // Validate payload (Task 3.5)
+      if (!isValidSubtitlePayload(candidate.payload)) {
+        console.log('[Netflix Translator] Invalid subtitle payload, ignoring');
+        return;
+      }
+
       // Notify callback
       this.onSubtitleCandidate?.(candidate);
 
-      // Forward to service worker for processing
-      chrome.runtime
-        .sendMessage({
-          type: 'SUBTITLE_CANDIDATE',
-          resource: {
-            ...candidate,
-            videoId: this.currentVideoId,
-            acquisitionMethod: candidate.source === 'fetch' ? 'page-world-clone' : 'page-world-clone',
-            discoveredAt: candidate.timestamp,
-          },
-        })
-        .catch((err) => {
-          console.error('[Netflix Translator] Failed to forward subtitle candidate:', err);
-        });
+      // Process candidate: try re-fetch first (Task 3.3), fallback to cloned payload (Task 3.4)
+      this.processSubtitleCandidate(candidate);
     }) as EventListener);
+  }
+
+  /**
+   * Process a subtitle candidate: validate, try re-fetch, store
+   */
+  private async processSubtitleCandidate(candidate: SubtitleCandidate): Promise<void> {
+    let payload = candidate.payload;
+    let acquisitionMethod: 'refetch' | 'page-world-clone' = 'page-world-clone';
+
+    // Try primary acquisition: re-fetch from extension context (Task 3.3)
+    try {
+      const refetched = await refetchSubtitle(candidate.url);
+      if (refetched && isValidSubtitlePayload(refetched)) {
+        console.log('[Netflix Translator] Re-fetch succeeded');
+        payload = refetched;
+        acquisitionMethod = 'refetch';
+      } else {
+        console.log('[Netflix Translator] Re-fetch failed or invalid, using cloned payload');
+      }
+    } catch (err) {
+      console.log('[Netflix Translator] Re-fetch error, using cloned payload:', err);
+    }
+
+    // Create subtitle resource (Task 3.2)
+    const resource = await createSubtitleResource(
+      candidate.url,
+      candidate.contentType,
+      payload,
+      this.currentVideoId,
+      acquisitionMethod
+    );
+
+    // Override language if detected from URL
+    if (candidate.language) {
+      resource.sourceLanguage = candidate.language;
+    }
+
+    console.log('[Netflix Translator] Subtitle resource created:', {
+      id: resource.id,
+      format: resource.format,
+      hash: resource.contentHash?.substring(0, 16) + '...',
+      method: resource.acquisitionMethod,
+    });
+
+    // Forward to service worker
+    chrome.runtime
+      .sendMessage({
+        type: 'SUBTITLE_CANDIDATE',
+        resource,
+      })
+      .catch((err) => {
+        console.error('[Netflix Translator] Failed to forward subtitle resource:', err);
+      });
   }
 
   /**
