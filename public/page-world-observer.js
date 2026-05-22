@@ -2,6 +2,7 @@
 // Runs in the Netflix page context (not the extension isolated world)
 // Intercepts fetch() and XMLHttpRequest to discover subtitle resources
 // Cannot use chrome.* APIs
+// THIS FILE MUST BE PLAIN JAVASCRIPT - NO TYPESCRIPT SYNTAX
 
 (function () {
   'use strict';
@@ -40,16 +41,16 @@
   /**
    * Check if a URL looks like a subtitle request
    */
-  function looksLikeSubtitleUrl(url: string): boolean {
+  function looksLikeSubtitleUrl(url) {
     // Check URL patterns
-    for (const pattern of SUBTITLE_URL_PATTERNS) {
-      if (pattern.test(url)) {
+    for (let i = 0; i < SUBTITLE_URL_PATTERNS.length; i++) {
+      if (SUBTITLE_URL_PATTERNS[i].test(url)) {
         return true;
       }
     }
     // Check file extensions
-    for (const ext of SUBTITLE_EXTENSIONS) {
-      if (url.toLowerCase().includes(ext)) {
+    for (let i = 0; i < SUBTITLE_EXTENSIONS.length; i++) {
+      if (url.toLowerCase().includes(SUBTITLE_EXTENSIONS[i])) {
         return true;
       }
     }
@@ -59,16 +60,18 @@
   /**
    * Check if content type suggests subtitle data
    */
-  function looksLikeSubtitleContentType(contentType: string): boolean {
+  function looksLikeSubtitleContentType(contentType) {
     if (!contentType) return false;
     const ct = contentType.toLowerCase();
-    return SUBTITLE_CONTENT_TYPES.some((st) => ct.includes(st));
+    return SUBTITLE_CONTENT_TYPES.some(function (st) {
+      return ct.includes(st);
+    });
   }
 
   /**
    * Extract language code from URL if present
    */
-  function extractLanguage(url: string): string | undefined {
+  function extractLanguage(url) {
     // Common patterns: lang=en, language=zh, l=en, tlang=ja, etc.
     const patterns = [
       /[?&]lang(?:uage)?=([^&]+)/i,
@@ -78,8 +81,8 @@
       /[?&]sub(?:title)?_lang(?:uage)?=([^&]+)/i,
     ];
 
-    for (const pattern of patterns) {
-      const match = url.match(pattern);
+    for (let i = 0; i < patterns.length; i++) {
+      const match = url.match(patterns[i]);
       if (match) {
         return match[1];
       }
@@ -90,20 +93,14 @@
   /**
    * Notify the content script (isolated world) about a discovered subtitle
    */
-  function notifySubtitleCandidate(
-    url: string,
-    contentType: string,
-    payload: string,
-    method: string,
-    source: 'fetch' | 'xhr'
-  ): void {
+  function notifySubtitleCandidate(url, contentType, payload, method, source) {
     const event = new CustomEvent('nt-subtitle-candidate', {
       detail: {
-        url,
-        contentType,
-        payload,
-        method,
-        source,
+        url: url,
+        contentType: contentType,
+        payload: payload,
+        method: method,
+        source: source,
         language: extractLanguage(url),
         timestamp: Date.now(),
       },
@@ -114,7 +111,7 @@
   /**
    * Notify content script about URL changes (SPA navigation)
    */
-  function notifyUrlChange(): void {
+  function notifyUrlChange() {
     const event = new CustomEvent('nt-url-changed', {
       detail: {
         url: window.location.href,
@@ -128,10 +125,7 @@
 
   const originalFetch = window.fetch;
 
-  window.fetch = async function (
-    input: RequestInfo | URL,
-    init?: RequestInit
-  ): Promise<Response> {
+  window.fetch = async function (input, init) {
     const request = input instanceof Request ? input : new Request(input, init);
     const url = request.url;
     const method = request.method || 'GET';
@@ -177,22 +171,16 @@
     let requestMethod = 'GET';
 
     // Override open to capture URL and method
-    xhr.open = function (
-      method: string,
-      url: string | URL,
-      async?: boolean,
-      username?: string | null,
-      password?: string | null
-    ): void {
+    xhr.open = function (method, url, async, username, password) {
       requestMethod = method;
       requestUrl = url.toString();
-      return realOpen(method, url, async ?? true, username, password);
+      return realOpen(method, url, async !== undefined ? async : true, username, password);
     };
 
     // Override send to intercept response
-    xhr.send = function (body?: Document | XMLHttpRequestBodyInit | null): void {
+    xhr.send = function (body) {
       // Listen for load event to capture response
-      const onLoad = (): void => {
+      const onLoad = function () {
         try {
           const contentType = xhr.getResponseHeader('content-type') || '';
           const isSubtitleUrl = looksLikeSubtitleUrl(requestUrl);
@@ -220,7 +208,7 @@
     };
 
     return xhr;
-  } as typeof XMLHttpRequest;
+  };
 
   // Copy static properties
   Object.setPrototypeOf(window.XMLHttpRequest, OriginalXHR);
@@ -231,29 +219,21 @@
   const originalPushState = history.pushState;
   const originalReplaceState = history.replaceState;
 
-  history.pushState = function (
-    data: unknown,
-    unused: string,
-    url?: string | URL | null
-  ): void {
+  history.pushState = function (data, unused, url) {
     originalPushState.apply(this, [data, unused, url]);
     if (url) {
       notifyUrlChange();
     }
   };
 
-  history.replaceState = function (
-    data: unknown,
-    unused: string,
-    url?: string | URL | null
-  ): void {
+  history.replaceState = function (data, unused, url) {
     originalReplaceState.apply(this, [data, unused, url]);
     if (url) {
       notifyUrlChange();
     }
   };
 
-  window.addEventListener('popstate', () => {
+  window.addEventListener('popstate', function () {
     notifyUrlChange();
   });
 
