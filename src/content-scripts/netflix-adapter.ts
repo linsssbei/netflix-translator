@@ -105,7 +105,6 @@ export class NetflixAdapter {
       // Validate payload (Task 3.5)
       const validation = validateSubtitlePayload(candidate.payload);
       if (!validation.valid) {
-        this.overlay.setStatus(`Invalid: ${validation.reason}`);
         this.overlay.addRejectedPayload(
           candidate.url,
           validation.reason,

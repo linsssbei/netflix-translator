@@ -31,11 +31,20 @@
     /\/nq\//i,
     /\/msl\//i,
     /\/website\//i,
+    /\/api\/ftl\//i,
     /licensedmanifest/i,
     /release\/metadata/i,
-    /\/api\/graphql/i,
+    /graphql/i,
+    /probe/i,
     /trace/i,
     /beacon/i,
+    /ping/i,
+    /heartbeat/i,
+    /analytics/i,
+    /metrics/i,
+    /telemetry/i,
+    /tracking/i,
+    /web\.prod\.cloud\.netflix\.com/i,
   ];
 
   // Subtitle content types
