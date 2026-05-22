@@ -6,9 +6,9 @@
 
 ## 2. Go/No-Go: Netflix Video Detection
 
-- [ ] 2.1 Implement Netflix watch URL matching and video ID extraction
-- [ ] 2.2 Add unit tests for supported watch URLs, non-watch Netflix URLs, malformed URLs, and video ID extraction
-- [ ] 2.3 Implement Netflix single-page navigation detection when the watch URL changes without full page reload
+- [x] 2.1 Implement Netflix watch URL matching and video ID extraction
+- [x] 2.2 Add unit tests for supported watch URLs, non-watch Netflix URLs, malformed URLs, and video ID extraction
+- [x] 2.3 Implement Netflix single-page navigation detection when the watch URL changes without full page reload
 - [ ] 2.4 Manually verify the unpacked extension can detect and display the active video ID on a real Netflix watch page
 
 ## 3. Go/No-Go: Subtitle Payload Acquisition

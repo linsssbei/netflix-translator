@@ -1,21 +1,29 @@
 // Netflix Translator - Content Script for Netflix
 // Injected into Netflix pages to detect video, observe playback, and render subtitles
 
+import { NetflixAdapter } from './netflix-adapter';
+import type { VideoIdentity } from '../shared/types';
+
 console.log('[Netflix Translator] Content script loaded on Netflix');
 
-// TODO: Implement video detection, SPA navigation observation, subtitle rendering
+let adapter: NetflixAdapter;
 
 function init(): void {
   console.log('[Netflix Translator] Initializing Netflix adapter');
-  
-  // Placeholder: report page load to service worker
-  chrome.runtime.sendMessage({
-    type: 'PAGE_LOADED',
-    url: window.location.href,
-    timestamp: Date.now(),
-  }).catch(err => {
-    console.error('[Netflix Translator] Failed to send page load message:', err);
+
+  adapter = new NetflixAdapter({
+    onVideoChange: (video: VideoIdentity | null) => {
+      if (video) {
+        console.log(`[Netflix Translator] Now watching video: ${video.videoId}`);
+        // TODO: Trigger subtitle acquisition when video changes
+      } else {
+        console.log('[Netflix Translator] No longer on a watch page');
+        // TODO: Clean up subtitle rendering
+      }
+    },
   });
+
+  adapter.start();
 }
 
 if (document.readyState === 'loading') {

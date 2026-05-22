@@ -48,7 +48,7 @@ export function createChromeMock(): ChromeMock {
       },
     },
     runtime: {
-      sendMessage: vi.fn(),
+      sendMessage: vi.fn(() => Promise.resolve()) as MockFn,
       onMessage: {
         addListener: vi.fn(),
         removeListener: vi.fn(),
@@ -60,7 +60,7 @@ export function createChromeMock(): ChromeMock {
     },
     tabs: {
       query: vi.fn(),
-      sendMessage: vi.fn(),
+      sendMessage: vi.fn(() => Promise.resolve()) as MockFn,
     },
     scripting: {
       executeScript: vi.fn(),
