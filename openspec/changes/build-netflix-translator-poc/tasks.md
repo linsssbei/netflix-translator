@@ -9,12 +9,12 @@
 - [x] 2.1 Implement Netflix watch URL matching and video ID extraction
 - [x] 2.2 Add unit tests for supported watch URLs, non-watch Netflix URLs, malformed URLs, and video ID extraction
 - [x] 2.3 Implement Netflix single-page navigation detection when the watch URL changes without full page reload
-- [ ] 2.4 Manually verify the unpacked extension can detect and display the active video ID on a real Netflix watch page
+- [x] 2.4 Manually verify the unpacked extension can detect and display the active video ID on a real Netflix watch page
 
 ## 3. Go/No-Go: Subtitle Payload Acquisition
 
-- [ ] 3.1 Implement a page-world network observer for subtitle/caption/timed-text request discovery without parsing rendered subtitle DOM
-- [ ] 3.2 Record subtitle candidates with video ID, source language if available, subtitle format if available, URL, request context, acquisition method, and timestamp
+- [x] 3.1 Implement a page-world network observer for subtitle/caption/timed-text request discovery without parsing rendered subtitle DOM
+- [x] 3.2 Record subtitle candidates with video ID, source language if available, subtitle format if available, URL, request context, acquisition method, and timestamp
 - [ ] 3.3 Try primary acquisition by re-fetching the discovered subtitle text resource from the extension context
 - [ ] 3.4 Implement fallback acquisition by cloning only subtitle text responses from page-world fetch/XHR when re-fetching is blocked
 - [ ] 3.5 Validate subtitle candidates by content type, URL hints, payload shape, and parser compatibility to avoid non-subtitle resources

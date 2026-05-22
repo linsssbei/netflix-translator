@@ -15,11 +15,14 @@ function init(): void {
     onVideoChange: (video: VideoIdentity | null) => {
       if (video) {
         console.log(`[Netflix Translator] Now watching video: ${video.videoId}`);
-        // TODO: Trigger subtitle acquisition when video changes
       } else {
         console.log('[Netflix Translator] No longer on a watch page');
-        // TODO: Clean up subtitle rendering
       }
+    },
+    onSubtitleCandidate: (candidate) => {
+      console.log(`[Netflix Translator] Subtitle discovered! Size: ${candidate.payload.length} chars`);
+      console.log(`[Netflix Translator] Subtitle URL: ${candidate.url}`);
+      // The candidate is already forwarded to service worker by the adapter
     },
   });
 

@@ -10,6 +10,8 @@ describe('extractVideoId', () => {
   it('extracts video ID with query parameters', () => {
     expect(extractVideoId('https://www.netflix.com/watch/12345?trackId=123')).toBe('12345');
     expect(extractVideoId('https://www.netflix.com/watch/12345?t=100')).toBe('12345');
+    // Real Netflix URL format observed in testing
+    expect(extractVideoId('https://www.netflix.com/watch/81948313?trackId=14170286')).toBe('81948313');
   });
 
   it('returns null for non-watch Netflix URLs', () => {
