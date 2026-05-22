@@ -8,6 +8,7 @@ import { parseTtml } from '../shared/subtitle-parser';
 import {
   saveSourceSubtitle,
   detectStaleTranslations,
+  getEntriesForVideo,
 } from '../shared/subtitle-library';
 import { DebugOverlay } from './debug-overlay';
 
@@ -205,6 +206,13 @@ export class NetflixAdapter {
           this.overlay.addError(`${stale.length} stale translation(s) detected`);
         }
       }
+
+      // Update overlay with library state
+      const entries = await getEntriesForVideo(resource.videoId);
+      const ready = entries.filter((e) => e.status === 'translation-ready').length;
+      this.overlay.setLibraryStatus(
+        `${entries.length} saved (${ready} ready, ${entries.length - ready} pending)`
+      );
 
       this.overlay.setStatus(
         `Subtitle acquired & saved (${resource.format}, ${targetLang})`

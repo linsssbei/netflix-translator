@@ -28,6 +28,7 @@ export interface DebugOverlayState {
     timestamp: number;
   }>;
   parsedInfo: ParsedSegmentsInfo | null;
+  libraryStatus: string | null;
   errors: string[];
 }
 
@@ -39,6 +40,7 @@ export class DebugOverlay {
     subtitleCandidates: [],
     rejectedPayloads: [],
     parsedInfo: null,
+    libraryStatus: null,
     errors: [],
   };
 
@@ -148,6 +150,11 @@ export class DebugOverlay {
     this.render();
   }
 
+  setLibraryStatus(status: string | null): void {
+    this.state.libraryStatus = status;
+    this.render();
+  }
+
   addError(error: string): void {
     this.state.errors.unshift(`${new Date().toLocaleTimeString()}: ${error}`);
     if (this.state.errors.length > 3) {
@@ -202,6 +209,13 @@ export class DebugOverlay {
         <div style="color: #888; font-size: 10px;">STATUS</div>
         <div style="color: #fff; font-size: 11px;">${this.state.status}</div>
       </div>
+
+      ${this.state.libraryStatus ? `
+      <div style="margin: 8px 0;">
+        <div style="color: #888; font-size: 10px;">LIBRARY</div>
+        <div style="color: #00ffcc; font-size: 11px;">${this.state.libraryStatus}</div>
+      </div>
+      ` : ''}
 
       <div style="margin: 8px 0;">
         <div style="color: #888; font-size: 10px;">SUBTITLE DISCOVERED (${this.state.subtitleCandidates.length})</div>
