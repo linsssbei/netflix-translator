@@ -1,7 +1,7 @@
 import type { VideoIdentity } from '../shared/types';
 import { extractVideoId } from '../shared/url-utils';
 import {
-  isValidSubtitlePayload,
+  validateSubtitlePayload,
   createSubtitleResource,
   refetchSubtitle,
 } from '../shared/subtitle-acquisition';
@@ -103,8 +103,14 @@ export class NetflixAdapter {
       });
 
       // Validate payload (Task 3.5)
-      if (!isValidSubtitlePayload(candidate.payload)) {
-        this.overlay.setStatus('Invalid subtitle payload, ignoring');
+      const validation = validateSubtitlePayload(candidate.payload);
+      if (!validation.valid) {
+        this.overlay.setStatus(`Invalid: ${validation.reason}`);
+        this.overlay.addRejectedPayload(
+          candidate.url,
+          validation.reason,
+          validation.preview
+        );
         return;
       }
 
@@ -126,7 +132,7 @@ export class NetflixAdapter {
     // Try primary acquisition: re-fetch from extension context (Task 3.3)
     try {
       const refetched = await refetchSubtitle(candidate.url);
-      if (refetched && isValidSubtitlePayload(refetched)) {
+      if (refetched && validateSubtitlePayload(refetched).valid) {
         console.log('[Netflix Translator] Re-fetch succeeded');
         payload = refetched;
         acquisitionMethod = 'refetch';

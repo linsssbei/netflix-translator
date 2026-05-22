@@ -10,6 +10,12 @@ export interface DebugOverlayState {
     size: number;
     timestamp: number;
   }>;
+  rejectedPayloads: Array<{
+    url: string;
+    reason: string;
+    preview: string;
+    timestamp: number;
+  }>;
   errors: string[];
 }
 
@@ -19,6 +25,7 @@ export class DebugOverlay {
     videoId: null,
     status: 'Initializing...',
     subtitleCandidates: [],
+    rejectedPayloads: [],
     errors: [],
   };
 
@@ -107,6 +114,22 @@ export class DebugOverlay {
     this.render();
   }
 
+  addRejectedPayload(url: string, reason: string, preview: string): void {
+    this.state.rejectedPayloads.unshift({
+      url: url.substring(0, 60) + (url.length > 60 ? '...' : ''),
+      reason,
+      preview: preview.substring(0, 100) + (preview.length > 100 ? '...' : ''),
+      timestamp: Date.now(),
+    });
+
+    // Keep only last 3 rejections
+    if (this.state.rejectedPayloads.length > 3) {
+      this.state.rejectedPayloads.pop();
+    }
+
+    this.render();
+  }
+
   addError(error: string): void {
     this.state.errors.unshift(`${new Date().toLocaleTimeString()}: ${error}`);
     if (this.state.errors.length > 3) {
@@ -124,6 +147,18 @@ export class DebugOverlay {
       <div style="margin: 4px 0; padding: 4px; background: rgba(0,255,0,0.1); border-radius: 3px;">
         <div style="color: #00ff00; font-size: 10px;">📄 ${c.format.toUpperCase()} (${c.size} bytes)</div>
         <div style="color: #aaa; font-size: 9px; word-break: break-all;">${c.url}</div>
+      </div>
+    `
+      )
+      .join('');
+
+    const rejectedHtml = this.state.rejectedPayloads
+      .map(
+        (r) => `
+      <div style="margin: 4px 0; padding: 4px; background: rgba(255,165,0,0.1); border-radius: 3px;">
+        <div style="color: #ffaa00; font-size: 10px;">⚠️ ${r.reason}</div>
+        <div style="color: #aaa; font-size: 9px; word-break: break-all;">${r.url}</div>
+        <div style="color: #666; font-size: 8px; font-style: italic;">Preview: ${r.preview}</div>
       </div>
     `
       )
@@ -154,6 +189,13 @@ export class DebugOverlay {
         <div style="color: #888; font-size: 10px;">SUBTITLE DISCOVERED (${this.state.subtitleCandidates.length})</div>
         ${candidatesHtml || '<div style="color: #666; font-size: 10px;">No subtitles found yet...</div>'}
       </div>
+
+      ${this.state.rejectedPayloads.length > 0 ? `
+      <div style="margin: 8px 0;">
+        <div style="color: #888; font-size: 10px;">REJECTED PAYLOADS (${this.state.rejectedPayloads.length})</div>
+        ${rejectedHtml}
+      </div>
+      ` : ''}
 
       ${errorsHtml ? `
       <div style="margin: 8px 0;">

@@ -28,23 +28,58 @@ export function detectSubtitleFormat(payload: string, contentType: string): stri
 
 /**
  * Validate that a payload looks like actual subtitle data
+ * Returns validation details for debugging
  */
-export function isValidSubtitlePayload(payload: string): boolean {
-  if (!payload || payload.length < 10) return false;
+export interface ValidationResult {
+  valid: boolean;
+  reason: string;
+  preview: string;
+}
+
+export function validateSubtitlePayload(payload: string): ValidationResult {
+  if (!payload || payload.length < 10) {
+    return {
+      valid: false,
+      reason: 'Payload too short or empty',
+      preview: payload?.substring(0, 100) || 'null',
+    };
+  }
 
   const trimmed = payload.trim().substring(0, 200).toLowerCase();
 
   // Must contain timing information or subtitle markers
   const hasTiming = /\d{2}:\d{2}:\d{2}/.test(payload) || // SRT/WebVTT timing
-    /\d+:\d{2}/.test(payload); // Short timing
+    /\d+:\d{2}/.test(payload) || // Short timing
+    /begin\s*=\s*["']\d+:/i.test(payload) || // TTML begin attribute
+    /end\s*=\s*["']\d+:/i.test(payload); // TTML end attribute
 
   const hasMarkers = trimmed.includes('-->') || // SRT
     trimmed.includes('webvtt') || // WebVTT
     trimmed.includes('<?xml') || // TTML/DFXP
+    trimmed.includes('<tt') || // TTML root element
+    trimmed.includes('<body') || // TTML body
+    trimmed.includes('<div') || // TTML div
     trimmed.includes('<p ') || // TTML paragraphs
-    (trimmed.startsWith('{') && trimmed.includes('text')); // JSON subtitle format
+    trimmed.includes('xml:lang') || // TTML language
+    (trimmed.startsWith('{') && trimmed.includes('text')) || // JSON subtitle
+    (trimmed.startsWith('<') && hasTiming); // Generic XML with timing
 
-  return hasTiming || hasMarkers;
+  const valid = hasTiming || hasMarkers;
+
+  return {
+    valid,
+    reason: valid
+      ? 'Valid subtitle detected'
+      : `No timing (${hasTiming}) or markers (${hasMarkers}) found`,
+    preview: payload.substring(0, 150).replace(/\n/g, '\\n'),
+  };
+}
+
+/**
+ * Legacy function for backwards compatibility
+ */
+export function isValidSubtitlePayload(payload: string): boolean {
+  return validateSubtitlePayload(payload).valid;
 }
 
 /**
