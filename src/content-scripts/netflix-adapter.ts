@@ -5,6 +5,7 @@ import {
   createSubtitleResource,
   refetchSubtitle,
 } from '../shared/subtitle-acquisition';
+import { DebugOverlay } from './debug-overlay';
 
 /**
  * Raw subtitle candidate from the page-world observer
@@ -29,6 +30,7 @@ export class NetflixAdapter {
   private observerInjected = false;
   private onVideoChange?: (video: VideoIdentity | null) => void;
   private onSubtitleCandidate?: (candidate: SubtitleCandidate) => void;
+  private overlay: DebugOverlay;
 
   constructor(options?: {
     onVideoChange?: (video: VideoIdentity | null) => void;
@@ -36,6 +38,7 @@ export class NetflixAdapter {
   }) {
     this.onVideoChange = options?.onVideoChange;
     this.onSubtitleCandidate = options?.onSubtitleCandidate;
+    this.overlay = new DebugOverlay();
   }
 
   /**
@@ -63,13 +66,13 @@ export class NetflixAdapter {
       script.onload = () => {
         script.remove(); // Clean up after injection
       };
-      script.onerror = (err) => {
-        console.error('[Netflix Translator] Failed to inject page-world observer:', err);
+      script.onerror = () => {
+        this.overlay.addError('Failed to inject page-world observer');
       };
       (document.head || document.documentElement).appendChild(script);
-      console.log('[Netflix Translator] Page-world observer injected');
+      this.overlay.setStatus('Observer injected, monitoring network...');
     } catch (err) {
-      console.error('[Netflix Translator] Error injecting observer:', err);
+      this.overlay.addError('Error injecting observer: ' + (err as Error).message);
     }
   }
 
@@ -101,7 +104,7 @@ export class NetflixAdapter {
 
       // Validate payload (Task 3.5)
       if (!isValidSubtitlePayload(candidate.payload)) {
-        console.log('[Netflix Translator] Invalid subtitle payload, ignoring');
+        this.overlay.setStatus('Invalid subtitle payload, ignoring');
         return;
       }
 
@@ -148,12 +151,15 @@ export class NetflixAdapter {
       resource.sourceLanguage = candidate.language;
     }
 
-    console.log('[Netflix Translator] Subtitle resource created:', {
-      id: resource.id,
-      format: resource.format,
-      hash: resource.contentHash?.substring(0, 16) + '...',
-      method: resource.acquisitionMethod,
-    });
+    // Update debug overlay
+    this.overlay.addSubtitleCandidate(
+      candidate.url,
+      resource.format,
+      payload.length
+    );
+    this.overlay.setStatus(
+      `Subtitle acquired via ${acquisitionMethod} (${resource.format})`
+    );
 
     // Forward to service worker
     chrome.runtime
@@ -162,7 +168,7 @@ export class NetflixAdapter {
         resource,
       })
       .catch((err) => {
-        console.error('[Netflix Translator] Failed to forward subtitle resource:', err);
+        this.overlay.addError('Failed to forward resource: ' + (err as Error).message);
       });
   }
 
@@ -170,9 +176,7 @@ export class NetflixAdapter {
    * Handle URL changes and detect video transitions
    */
   private handleUrlChange(url: string): void {
-    console.log('[Netflix Translator] handleUrlChange called with:', url);
     const videoId = extractVideoId(url);
-    console.log('[Netflix Translator] extractVideoId result:', videoId);
 
     if (videoId && videoId !== this.currentVideoId) {
       // Entered a new watch page or changed videos
@@ -201,7 +205,8 @@ export class NetflixAdapter {
    * Report video detected to service worker and callback
    */
   private reportVideoDetected(video: VideoIdentity): void {
-    console.log('[Netflix Translator] Video detected:', video.videoId);
+    this.overlay.updateVideoId(video.videoId);
+    this.overlay.setStatus('Video detected, monitoring for subtitles...');
 
     // Notify callback (e.g., content script)
     this.onVideoChange?.(video);
@@ -214,7 +219,7 @@ export class NetflixAdapter {
         url: video.url,
       })
       .catch((err) => {
-        console.error('[Netflix Translator] Failed to report video detection:', err);
+        this.overlay.addError('Failed to report video: ' + (err as Error).message);
       });
   }
 
@@ -222,7 +227,8 @@ export class NetflixAdapter {
    * Report that user left a watch page
    */
   private reportVideoLeft(): void {
-    console.log('[Netflix Translator] Left watch page');
+    this.overlay.updateVideoId(null);
+    this.overlay.setStatus('Left watch page');
 
     this.onVideoChange?.(null);
 
@@ -233,7 +239,7 @@ export class NetflixAdapter {
         url: window.location.href,
       })
       .catch((err) => {
-        console.error('[Netflix Translator] Failed to report video left:', err);
+        this.overlay.addError('Failed to report left: ' + (err as Error).message);
       });
   }
 
