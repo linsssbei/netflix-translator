@@ -76,7 +76,7 @@ export interface CleanedTranslationInput {
 /**
  * Translation provider types
  */
-export type TranslationProvider = 'openai' | 'anthropic' | 'custom';
+export type TranslationProvider = 'deepseek' | 'openai' | 'anthropic' | 'custom';
 
 /**
  * Request to translate a batch of segments
@@ -160,6 +160,8 @@ export interface SubtitleLibraryEntry {
   updatedAt: number;
   /** Optional: subtitle resource metadata (if source was acquired) */
   subtitleResource?: SubtitleResource;
+  /** Optional: raw subtitle payload (for translation processing) */
+  sourcePayload?: string;
   /** Optional: translated artifact (if preparation succeeded) */
   translatedArtifact?: TranslatedArtifact;
   /** Optional: error message if preparation failed */

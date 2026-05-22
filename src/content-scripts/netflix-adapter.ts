@@ -192,7 +192,7 @@ export class NetflixAdapter {
     // Save to subtitle library (Task 5.3)
     try {
       const targetLang = await this.getTargetLanguage();
-      await saveSourceSubtitle(resource, targetLang);
+      await saveSourceSubtitle(resource, targetLang, candidate.payload);
 
       // Detect stale translations for this video (Task 5.6)
       if (resource.contentHash) {

@@ -47,7 +47,8 @@ export function parseLibraryKey(
  */
 export async function saveSourceSubtitle(
   resource: SubtitleResource,
-  targetLanguage: string
+  targetLanguage: string,
+  payload?: string
 ): Promise<void> {
   if (!resource.contentHash) {
     throw new Error('Cannot save source subtitle: missing content hash');
@@ -69,6 +70,7 @@ export async function saveSourceSubtitle(
     status: 'source-ready',
     updatedAt: Date.now(),
     subtitleResource: resource,
+    sourcePayload: payload,
   };
 
   const storageKey = STORAGE_PREFIX + key;
