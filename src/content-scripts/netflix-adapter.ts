@@ -5,7 +5,16 @@ import {
   createSubtitleResource,
   refetchSubtitle,
 } from '../shared/subtitle-acquisition';
+import { parseTtml } from '../shared/subtitle-parser';
 import { DebugOverlay } from './debug-overlay';
+
+function formatMs(ms: number): string {
+  const totalSeconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  const millis = ms % 1000;
+  return `${minutes}:${seconds.toString().padStart(2, '0')}.${millis.toString().padStart(3, '0')}`;
+}
 
 /**
  * Raw subtitle candidate from the page-world observer
@@ -165,6 +174,31 @@ export class NetflixAdapter {
     this.overlay.setStatus(
       `Subtitle acquired via ${acquisitionMethod} (${resource.format})`
     );
+
+    // Parse the subtitle payload (Task 4.1-4.2)
+    if (resource.format === 'ttml' || resource.format === 'dfxp') {
+      try {
+        const segments = parseTtml(payload);
+        const firstSegments = segments.slice(0, 3).map((s) => ({
+          id: s.id,
+          start: formatMs(s.startMs),
+          end: formatMs(s.endMs),
+          text: s.sourceText.length > 60 ? s.sourceText.substring(0, 57) + '...' : s.sourceText,
+        }));
+        const totalDuration = formatMs(
+          segments.length > 0 ? segments[segments.length - 1].endMs : 0
+        );
+        this.overlay.setParsedInfo({
+          segmentCount: segments.length,
+          totalDuration,
+          firstSegments,
+        });
+        console.log(`[Netflix Translator] Parsed ${segments.length} segments, total duration: ${totalDuration}`);
+      } catch (parseErr) {
+        console.warn('[Netflix Translator] Parse error:', parseErr);
+        this.overlay.addError('TTML parse failed: ' + (parseErr as Error).message);
+      }
+    }
 
     // Forward to service worker
     chrome.runtime

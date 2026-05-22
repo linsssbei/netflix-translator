@@ -1,6 +1,17 @@
 // Netflix Translator - Debug Overlay
 // Injected into Netflix pages for remote debugging without DevTools
 
+export interface ParsedSegmentsInfo {
+  segmentCount: number;
+  totalDuration: string;
+  firstSegments: Array<{
+    id: string;
+    start: string;
+    end: string;
+    text: string;
+  }>;
+}
+
 export interface DebugOverlayState {
   videoId: string | null;
   status: string;
@@ -16,6 +27,7 @@ export interface DebugOverlayState {
     preview: string;
     timestamp: number;
   }>;
+  parsedInfo: ParsedSegmentsInfo | null;
   errors: string[];
 }
 
@@ -26,6 +38,7 @@ export class DebugOverlay {
     status: 'Initializing...',
     subtitleCandidates: [],
     rejectedPayloads: [],
+    parsedInfo: null,
     errors: [],
   };
 
@@ -130,6 +143,11 @@ export class DebugOverlay {
     this.render();
   }
 
+  setParsedInfo(info: ParsedSegmentsInfo): void {
+    this.state.parsedInfo = info;
+    this.render();
+  }
+
   addError(error: string): void {
     this.state.errors.unshift(`${new Date().toLocaleTimeString()}: ${error}`);
     if (this.state.errors.length > 3) {
@@ -189,6 +207,21 @@ export class DebugOverlay {
         <div style="color: #888; font-size: 10px;">SUBTITLE DISCOVERED (${this.state.subtitleCandidates.length})</div>
         ${candidatesHtml || '<div style="color: #666; font-size: 10px;">No subtitles found yet...</div>'}
       </div>
+
+      ${this.state.parsedInfo ? `
+      <div style="margin: 8px 0;">
+        <div style="color: #888; font-size: 10px;">PARSED SEGMENTS (${this.state.parsedInfo.segmentCount})</div>
+        <div style="color: #aaa; font-size: 9px; margin: 2px 0;">Total duration: ${this.state.parsedInfo.totalDuration}</div>
+        ${this.state.parsedInfo.firstSegments.map((s) => `
+        <div style="margin: 2px 0; padding: 3px 6px; background: rgba(0,255,0,0.08); border-left: 2px solid #00ff00; font-size: 10px;">
+          <span style="color: #0af;">${s.start}→${s.end}</span>
+          <span style="color: #aaa; font-size: 8px; margin-left: 6px;">${s.id}</span>
+          <div style="color: #fff; margin-top: 1px;">${s.text}</div>
+        </div>
+        `).join('')}
+        ${this.state.parsedInfo.segmentCount > 3 ? `<div style="color: #666; font-size: 9px; margin-top: 2px;">... and ${this.state.parsedInfo.segmentCount - 3} more segments</div>` : ''}
+      </div>
+      ` : ''}
 
       ${this.state.rejectedPayloads.length > 0 ? `
       <div style="margin: 8px 0;">
