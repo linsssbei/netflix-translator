@@ -96,13 +96,26 @@ async function handlePrepareSubtitles(
 
   const entries = await getEntriesForVideo(videoId);
 
-  const readyEntries = entries.filter(
+  let readyEntries = entries.filter(
     (e) => e.status === 'source-ready' && e.targetLanguage === targetLanguage
   );
 
+  // Fallback: if no entries match the requested target language,
+  // use any source-ready entry for this video
   if (readyEntries.length === 0) {
+    readyEntries = entries.filter((e) => e.status === 'source-ready');
+  }
+
+  if (readyEntries.length === 0) {
+    const availableTargets = entries
+      .filter((e) => e.status === 'source-ready')
+      .map((e) => e.targetLanguage)
+      .join(', ');
     throw new Error(
-      `No source-ready subtitles found for video ${videoId} in ${targetLanguage}. Make sure subtitles have been acquired first.`
+      `No source-ready subtitles for video ${videoId}. ` +
+      (availableTargets
+        ? `Found languages: ${availableTargets}`
+        : 'Make sure subtitles have been acquired first.')
     );
   }
 
