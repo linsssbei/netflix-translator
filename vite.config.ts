@@ -3,7 +3,7 @@ import { resolve } from 'path';
 
 // Chrome content scripts cannot use ES module import statements.
 // This plugin inlines shared chunk code into content-script entries,
-// replacing imports with the actual code.
+// replacing imports with IIFE-wrapped chunks that export bindings back.
 function inlineContentScriptImportsPlugin(): Plugin {
   return {
     name: 'inline-content-script-imports',
@@ -14,15 +14,13 @@ function inlineContentScriptImportsPlugin(): Plugin {
 
         // Collect all imported chunk file names (transitively)
         const visited = new Set<string>();
-        const inlineCode: string[] = [];
         const importFilenames: string[] = [];
 
         function collectImports(fileName: string) {
           if (visited.has(fileName)) return;
           visited.add(fileName);
-          const dep = bundle[fileName] as { type: string; code: string; imports: string[] } | undefined;
+          const dep = bundle[fileName] as { type: string; imports: string[] } | undefined;
           if (!dep || dep.type !== 'chunk') return;
-          // Process transitive imports first
           for (const imp of dep.imports) {
             collectImports(imp);
           }
@@ -33,31 +31,89 @@ function inlineContentScriptImportsPlugin(): Plugin {
           collectImports(imp);
         }
 
-        // Build inlined code from imported chunks
+        if (importFilenames.length === 0) continue;
+
+        // Build the replacement: for each imported chunk, create an IIFE
+        // that returns its exports, then bind the imported names
+        const iifeDeclarations: string[] = [];
+        let chunkCounter = 0;
+
         for (const fn of importFilenames) {
-          const dep = bundle[fn] as { type: string; code: string } | undefined;
-          if (dep && dep.type === 'chunk') {
-            inlineCode.push(dep.code);
-          }
+          const dep = bundle[fn] as { type: string; code: string; exports: string[] } | undefined;
+          if (!dep || dep.type !== 'chunk') continue;
+
+          let depCode = dep.code;
+          // Convert `export { I as a, E as b }` → `return { a: I, b: E }`
+          // and `export { x }` → `return { x: x }`
+          depCode = depCode.replace(
+            /export\s*\{([^}]*)\};?/g,
+            (_e: string, exports: string) => {
+              const pairs = exports.split(',').map((s: string) => {
+                const trimmed = s.trim();
+                const asMatch = trimmed.match(/^(\w+)\s+as\s+(\w+)$/);
+                if (asMatch) return `${asMatch[2]}:${asMatch[1]}`;
+                return `${trimmed}:${trimmed}`;
+              });
+              return `return {${pairs.join(',')}};`;
+            }
+          );
+          // Convert `export default x;` → `return x;`
+          depCode = depCode.replace(
+            /export\s*default\s+(\w+);?/g,
+            'return $1;'
+          );
+
+          const chunkVar = `__c${chunkCounter}`;
+          iifeDeclarations.push(`var ${chunkVar}=(function(){${depCode}})();`);
+          chunkCounter++;
         }
 
-        if (inlineCode.length > 0) {
-          let code = chunk.code;
-          // Remove import lines (they may be at start or mid-line in minified output)
-          code = code.replace(/import\s*\{[^}]*\}\s*from\s*["'][^"']+["'];?/g, '');
-          // Remove export lines (chunks use named exports, not valid in non-module scripts)
-          code = code.replace(/export\s*\{[^}]*\};?/g, '');
-          code = code.replace(/export\s*default\s+\w+;?/g, '');
+        // Build binding assignments from the import statements
+        let code = chunk.code;
 
-          // Prepend inlined shared code, each chunk wrapped in IIFE to avoid var collisions
-          const cleanInlined = inlineCode
-            .map((c) => {
-              c = c.replace(/export\s*\{[^}]*\};?/g, '').replace(/export\s*default\s+\w+;?/g, '');
-              return `(function(){${c}})();`;
-            })
-            .join('\n');
-          chunk.code = cleanInlined + '\n' + code.trim();
+        // Map chunk filenames to their IIFE variable
+        const fileToIIFE = new Map<string, string>();
+        let ci = 0;
+        for (const fn of importFilenames) {
+          fileToIIFE.set(fn, `__c${ci}`);
+          ci++;
         }
+
+        // Process imports: replace with IIFE bindings
+        for (const fn of importFilenames) {
+          const dep = bundle[fn] as { type: string; exports: string[] } | undefined;
+          if (!dep) continue;
+          const chunkVar = fileToIIFE.get(fn)!;
+
+          // Match import from this file — handle both "../shared/foo.js" and "./shared/foo.js"
+          const escapedFn = fn.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const fileImportRegex = new RegExp(
+            `import\\s*\\{([^}]*)\\}\\s*from\\s*["']\\.\\.?\\/${escapedFn}["'];?`,
+            'g'
+          );
+
+          code = code.replace(fileImportRegex, (_full, specifiers: string) => {
+            const bindings: string[] = [];
+            const parts = specifiers.split(',');
+            for (const part of parts) {
+              const trimmed = part.trim();
+              if (!trimmed) continue;
+              const asMatch = trimmed.match(/^(\w+)\s+as\s+(\w+)$/);
+              if (asMatch) {
+                bindings.push(`var ${asMatch[2]}=${chunkVar}.${asMatch[1]}`);
+              } else {
+                const name = trimmed.match(/^(\w+)$/)?.[1];
+                if (name) bindings.push(`var ${name}=${chunkVar}.${name}`);
+              }
+            }
+            return bindings.join(';');
+          });
+        }
+
+        code = code.replace(/export\s*\{[^}]*\};?/g, '');
+        code = code.replace(/export\s*default\s+\w+;?/g, '');
+
+        chunk.code = iifeDeclarations.join('\n') + '\n' + code.trim();
       }
     },
   };
