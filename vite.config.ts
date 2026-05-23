@@ -42,14 +42,18 @@ function inlineContentScriptImportsPlugin(): Plugin {
         }
 
         if (inlineCode.length > 0) {
-          // Remove import statements from the content-script code
           let code = chunk.code;
-          // Remove static import lines
-          code = code.replace(/^import\s*\{[^}]*\}\s*from\s*["'][^"']+["'];?\s*$/gm, '');
-          code = code.replace(/\nimport\s*\{[^}]*\}\s*from\s*["'][^"']+["'];?/g, '');
+          // Remove import lines (they may be at start or mid-line in minified output)
+          code = code.replace(/import\s*\{[^}]*\}\s*from\s*["'][^"']+["'];?/g, '');
+          // Remove export lines (chunks use named exports, not valid in non-module scripts)
+          code = code.replace(/export\s*\{[^}]*\};?/g, '');
+          code = code.replace(/export\s*default\s+\w+;?/g, '');
 
-          // Prepend inlined shared code
-          chunk.code = inlineCode.join('\n') + '\n' + code.trim();
+          // Prepend inlined shared code (also strip exports from inlined chunks)
+          const cleanInlined = inlineCode
+            .map((c) => c.replace(/export\s*\{[^}]*\};?/g, '').replace(/export\s*default\s+\w+;?/g, ''))
+            .join('\n');
+          chunk.code = cleanInlined + '\n' + code.trim();
         }
       }
     },
