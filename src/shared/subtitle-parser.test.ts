@@ -161,6 +161,21 @@ describe('parseTtml', () => {
     expect(() => parseTtml('<html><body><p>No subtitles here</p></body></html>')).toThrow();
   });
 
+  it('parses TTML with regex fallback when DOMParser unavailable', () => {
+    const origParser = (globalThis as any).DOMParser;
+    delete (globalThis as any).DOMParser;
+
+    try {
+      const payload = loadFixture('minimal-ttml.xml');
+      const segments = parseTtml(payload);
+      expect(segments).toHaveLength(3);
+      expect(segments[0].sourceText).toBe('こんにちは');
+      expect(segments[1].sourceText).toBe('ありがとうございます');
+    } finally {
+      (globalThis as any).DOMParser = origParser;
+    }
+  });
+
   it('returns empty array for empty payload', () => {
     expect(parseTtml('')).toEqual([]);
     expect(parseTtml('   ')).toEqual([]);
