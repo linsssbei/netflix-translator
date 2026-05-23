@@ -106,7 +106,7 @@ function inlineContentScriptImportsPlugin(): Plugin {
                 if (name) bindings.push(`var ${name}=${chunkVar}.${name}`);
               }
             }
-            return bindings.join(';');
+            return bindings.length > 0 ? `${bindings.join(';')};` : '';
           });
         }
 

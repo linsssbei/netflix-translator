@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "test": "vitest",
     "test:ui": "vitest --ui",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test:extension-syntax": "npm run build && node --check dist/content-scripts/netflix.js && node --check dist/service-worker.js && node --check dist/page-world-observer.js && node --check dist/popup.js && node --check dist/options.js && node --check dist/shared/subtitle-parser.js"
   },
   "devDependencies": {
     "@types/chrome": "^0.0.268",
