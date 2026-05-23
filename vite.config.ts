@@ -50,7 +50,8 @@ function inlineContentScriptImportsPlugin(): Plugin {
             (_e: string, exports: string) => {
               const pairs = exports.split(',').map((s: string) => {
                 const trimmed = s.trim();
-                const asMatch = trimmed.match(/^(\w+)\s+as\s+(\w+)$/);
+                // Match "name as alias" where name can contain $ (valid JS identifier)
+                const asMatch = trimmed.match(/^([$\w]+)\s+as\s+([$\w]+)$/);
                 if (asMatch) return `${asMatch[2]}:${asMatch[1]}`;
                 return `${trimmed}:${trimmed}`;
               });
@@ -98,15 +99,15 @@ function inlineContentScriptImportsPlugin(): Plugin {
             for (const part of parts) {
               const trimmed = part.trim();
               if (!trimmed) continue;
-              const asMatch = trimmed.match(/^(\w+)\s+as\s+(\w+)$/);
+              const asMatch = trimmed.match(/^([$\w]+)\s+as\s+([$\w]+)$/);
               if (asMatch) {
                 bindings.push(`var ${asMatch[2]}=${chunkVar}.${asMatch[1]}`);
               } else {
-                const name = trimmed.match(/^(\w+)$/)?.[1];
+                const name = trimmed.match(/^([$\w]+)$/)?.[1];
                 if (name) bindings.push(`var ${name}=${chunkVar}.${name}`);
               }
             }
-            return bindings.length > 0 ? `${bindings.join(';')};` : '';
+            return bindings.join(';');
           });
         }
 
