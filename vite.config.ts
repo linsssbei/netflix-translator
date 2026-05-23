@@ -35,8 +35,8 @@ function inlineContentScriptImportsPlugin(): Plugin {
 
         // Build inlined code from imported chunks
         for (const fn of importFilenames) {
-          const dep = bundle[fn] as { type: string; code: string };
-          if (dep.type === 'chunk') {
+          const dep = bundle[fn] as { type: string; code: string } | undefined;
+          if (dep && dep.type === 'chunk') {
             inlineCode.push(dep.code);
           }
         }
@@ -49,9 +49,12 @@ function inlineContentScriptImportsPlugin(): Plugin {
           code = code.replace(/export\s*\{[^}]*\};?/g, '');
           code = code.replace(/export\s*default\s+\w+;?/g, '');
 
-          // Prepend inlined shared code (also strip exports from inlined chunks)
+          // Prepend inlined shared code, each chunk wrapped in IIFE to avoid var collisions
           const cleanInlined = inlineCode
-            .map((c) => c.replace(/export\s*\{[^}]*\};?/g, '').replace(/export\s*default\s+\w+;?/g, ''))
+            .map((c) => {
+              c = c.replace(/export\s*\{[^}]*\};?/g, '').replace(/export\s*default\s+\w+;?/g, '');
+              return `(function(){${c}})();`;
+            })
             .join('\n');
           chunk.code = cleanInlined + '\n' + code.trim();
         }
