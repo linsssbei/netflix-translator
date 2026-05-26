@@ -107,7 +107,7 @@ function inlineContentScriptImportsPlugin(): Plugin {
                 if (name) bindings.push(`var ${name}=${chunkVar}.${name}`);
               }
             }
-            return bindings.join(';');
+            return bindings.length > 0 ? `${bindings.join(';')};` : '';
           });
         }
 
@@ -132,6 +132,7 @@ export default defineConfig({
         'content-scripts/netflix': resolve(__dirname, 'src/content-scripts/netflix.ts'),
         popup: resolve(__dirname, 'popup.html'),
         options: resolve(__dirname, 'options.html'),
+        library: resolve(__dirname, 'library.html'),
       },
       output: {
         entryFileNames: '[name].js',

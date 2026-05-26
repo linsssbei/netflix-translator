@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Netflix Translator - Subtitle Library</title>
+  <link rel="stylesheet" href="library.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Subtitle Library</h1>
+      <div class="filters">
+        <select id="statusFilter">
+          <option value="">All Statuses</option>
+          <option value="source-ready">Source Ready</option>
+          <option value="preparing">Preparing</option>
+          <option value="translation-ready">Translation Ready</option>
+          <option value="translation-failed">Translation Failed</option>
+          <option value="stale-translation">Stale Translation</option>
+        </select>
+        <select id="languageFilter">
+          <option value="">All Languages</option>
+        </select>
+        <input type="text" id="searchInput" placeholder="Search by title or video ID...">
+      </div>
+    </header>
+
+    <div id="entryList" class="entry-list"></div>
+    <div class="empty-state hidden" id="emptyState">
+      <p>No subtitle library entries found.</p>
+      <p class="hint">Entries will appear here after you prepare subtitles on Netflix.</p>
+    </div>
+
+    <div id="detailView" class="detail-view hidden">
+      <button id="backButton" class="back-button">&larr; Back to list</button>
+      <div id="detailContent"></div>
+    </div>
+  </div>
+
+  <div id="deleteModal" class="modal hidden">
+    <div class="modal-content">
+      <p>Are you sure you want to delete this entry?</p>
+      <div class="modal-actions">
+        <button id="confirmDelete" class="btn-danger">Delete</button>
+        <button id="cancelDelete" class="btn-secondary">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="src/library/library.ts"></script>
+</body>
+</html>

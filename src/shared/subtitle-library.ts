@@ -2,7 +2,10 @@ import type {
   SubtitleLibraryEntry,
   SubtitleResource,
   TranslatedArtifact,
+  TranslatedSegment,
   PreparationStatus,
+  TranslationDebugInfo,
+  TranslationProgressInfo,
 } from './types';
 
 const STORAGE_PREFIX = 'nt_lib_';
@@ -60,21 +63,33 @@ export async function saveSourceSubtitle(
     targetLanguage,
     resource.contentHash
   );
-
-  const entry: SubtitleLibraryEntry = {
-    key,
-    videoId: resource.videoId,
-    sourceLanguage: resource.sourceLanguage,
-    targetLanguage,
-    sourceSubtitleHash: resource.contentHash,
-    status: 'source-ready',
-    updatedAt: Date.now(),
-    subtitleResource: resource,
-    sourcePayload: payload,
-  };
-
   const storageKey = STORAGE_PREFIX + key;
-  await chrome.storage.local.set({ [storageKey]: entry });
+
+  // Read existing entry to preserve translation data on re-acquisition
+  const result = await chrome.storage.local.get(storageKey);
+  const existing = result[storageKey] as SubtitleLibraryEntry | undefined;
+
+  if (existing) {
+    // Same hash → update source fields only, preserve translation data
+    existing.subtitleResource = resource;
+    existing.sourcePayload = payload;
+    existing.updatedAt = Date.now();
+    await chrome.storage.local.set({ [storageKey]: existing });
+  } else {
+    // New entry (first time seeing this hash)
+    const entry: SubtitleLibraryEntry = {
+      key,
+      videoId: resource.videoId,
+      sourceLanguage: resource.sourceLanguage,
+      targetLanguage,
+      sourceSubtitleHash: resource.contentHash,
+      status: 'source-ready',
+      updatedAt: Date.now(),
+      subtitleResource: resource,
+      sourcePayload: payload,
+    };
+    await chrome.storage.local.set({ [storageKey]: entry });
+  }
 }
 
 /**
@@ -100,7 +115,41 @@ export async function saveTranslatedArtifact(
 
   existing.status = 'translation-ready';
   existing.translatedArtifact = artifact;
+  delete existing.partialSegments;
   existing.updatedAt = Date.now();
+
+  await chrome.storage.local.set({ [storageKey]: existing });
+}
+
+/**
+ * Update a library entry with partial translation progress for diagnostics.
+ * Preserves partial segments but does NOT mark as translation-ready.
+ */
+export async function updatePartialArtifact(
+  videoId: string,
+  sourceLanguage: string,
+  targetLanguage: string,
+  sourceSubtitleHash: string,
+  partialSegments: TranslatedSegment[],
+  progress: TranslationProgressInfo,
+  errorMessage?: string
+): Promise<void> {
+  const key = buildLibraryKey(videoId, sourceLanguage, targetLanguage, sourceSubtitleHash);
+  const storageKey = STORAGE_PREFIX + key;
+
+  const result = await chrome.storage.local.get(storageKey);
+  const existing = result[storageKey] as SubtitleLibraryEntry | undefined;
+
+  if (!existing) {
+    throw new Error(`No library entry found for key: ${key}`);
+  }
+
+  existing.translationProgress = progress;
+  existing.partialSegments = partialSegments;
+  existing.updatedAt = Date.now();
+  if (errorMessage) {
+    existing.errorMessage = errorMessage;
+  }
 
   await chrome.storage.local.set({ [storageKey]: existing });
 }
@@ -195,10 +244,40 @@ export async function updatePreparationStatus(
 
   existing.status = status;
   existing.updatedAt = Date.now();
+  if (status === 'preparing') {
+    existing.preparingSince = Date.now();
+  } else {
+    delete existing.preparingSince;
+  }
   if (errorMessage) {
     existing.errorMessage = errorMessage;
   }
 
+  await chrome.storage.local.set({ [storageKey]: existing });
+}
+
+/**
+ * Save the latest translation provider debug summary for a library entry.
+ */
+export async function saveTranslationDebugInfo(
+  videoId: string,
+  sourceLanguage: string,
+  targetLanguage: string,
+  sourceSubtitleHash: string,
+  debug: TranslationDebugInfo
+): Promise<void> {
+  const key = buildLibraryKey(videoId, sourceLanguage, targetLanguage, sourceSubtitleHash);
+  const storageKey = STORAGE_PREFIX + key;
+
+  const result = await chrome.storage.local.get(storageKey);
+  const existing = result[storageKey] as SubtitleLibraryEntry | undefined;
+
+  if (!existing) {
+    throw new Error(`No library entry found for key: ${key}`);
+  }
+
+  existing.translationDebug = debug;
+  existing.updatedAt = Date.now();
   await chrome.storage.local.set({ [storageKey]: existing });
 }
 
@@ -254,4 +333,39 @@ export async function removeEntriesForVideo(videoId: string): Promise<void> {
   if (keysToRemove.length > 0) {
     await chrome.storage.local.remove(keysToRemove);
   }
+}
+
+/**
+ * List all local subtitle library entries sorted by updated time (newest first)
+ */
+export async function listAllEntries(): Promise<SubtitleLibraryEntry[]> {
+  const all = await chrome.storage.local.get(null);
+  const entries: SubtitleLibraryEntry[] = [];
+
+  for (const [storageKey, value] of Object.entries(all)) {
+    if (!storageKey.startsWith(STORAGE_PREFIX)) continue;
+    entries.push(value as SubtitleLibraryEntry);
+  }
+
+  entries.sort((a, b) => b.updatedAt - a.updatedAt);
+  return entries;
+}
+
+/**
+ * Delete one library entry
+ */
+export async function removeEntry(
+  videoId: string,
+  sourceLanguage: string,
+  targetLanguage: string,
+  sourceSubtitleHash: string
+): Promise<boolean> {
+  const key = buildLibraryKey(videoId, sourceLanguage, targetLanguage, sourceSubtitleHash);
+  const storageKey = STORAGE_PREFIX + key;
+
+  const result = await chrome.storage.local.get(storageKey);
+  if (!result[storageKey]) return false;
+
+  await chrome.storage.local.remove(storageKey);
+  return true;
 }

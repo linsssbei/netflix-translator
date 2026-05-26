@@ -1,0 +1,403 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: #1a1a2e;
+  color: #e0e0e0;
+  min-height: 100vh;
+}
+
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+header {
+  margin-bottom: 24px;
+}
+
+h1 {
+  font-size: 24px;
+  color: #e50914;
+  margin-bottom: 16px;
+}
+
+.filters {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+select, input {
+  padding: 8px 12px;
+  border: 1px solid #333;
+  border-radius: 4px;
+  background: #16213e;
+  color: #e0e0e0;
+  font-size: 14px;
+}
+
+select:focus, input:focus {
+  outline: none;
+  border-color: #e50914;
+}
+
+input[type="text"] {
+  flex: 1;
+  min-width: 200px;
+}
+
+.entry-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.entry-card {
+  background: #16213e;
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 16px;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+
+.entry-card:hover {
+  border-color: #e50914;
+}
+
+.entry-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 8px;
+}
+
+.entry-title {
+  font-weight: 600;
+  font-size: 16px;
+}
+
+.entry-video-id {
+  color: #888;
+  font-size: 12px;
+  font-family: monospace;
+}
+
+.entry-meta {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: #aaa;
+}
+
+.entry-meta span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.status-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.status-source-ready { background: #2d5a27; color: #4ade80; }
+.status-preparing { background: #4a3a1a; color: #fbbf24; }
+.status-translation-ready { background: #1a3a4a; color: #60a5fa; }
+.status-translation-failed { background: #4a1a1a; color: #f87171; }
+.status-stale-translation { background: #3a3a1a; color: #d4d4d4; }
+
+.empty-state {
+  text-align: center;
+  padding: 60px 20px;
+  color: #888;
+}
+
+.empty-state .hint {
+  font-size: 14px;
+  margin-top: 8px;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.detail-view {
+  background: #16213e;
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 24px;
+}
+
+.back-button {
+  background: none;
+  border: none;
+  color: #e50914;
+  cursor: pointer;
+  font-size: 14px;
+  margin-bottom: 16px;
+}
+
+.back-button:hover {
+  text-decoration: underline;
+}
+
+.detail-header {
+  margin-bottom: 24px;
+}
+
+.detail-header h2 {
+  font-size: 20px;
+  margin-bottom: 8px;
+}
+
+.detail-header .meta {
+  color: #aaa;
+  font-size: 13px;
+}
+
+.export-section {
+  margin-bottom: 24px;
+  padding: 16px;
+  background: #1a1a2e;
+  border-radius: 6px;
+  border: 1px solid #333;
+}
+
+.export-section.disabled {
+  opacity: 0.6;
+}
+
+.export-section h3 {
+  font-size: 14px;
+  color: #888;
+  margin-bottom: 12px;
+}
+
+.export-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.export-hint {
+  font-size: 13px;
+  color: #888;
+  font-style: italic;
+}
+
+.btn-export {
+  background: #1a3a4a;
+  color: #60a5fa;
+  border: 1px solid #2a4a5a;
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.btn-export:hover {
+  background: #2a4a5a;
+}
+
+.diagnostics {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.diagnostic-card {
+  background: #1a1a2e;
+  padding: 12px;
+  border-radius: 6px;
+}
+
+.diagnostic-card .label {
+  font-size: 12px;
+  color: #888;
+  margin-bottom: 4px;
+}
+
+.diagnostic-card .value {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.segment-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.segment-table th {
+  text-align: left;
+  padding: 8px 12px;
+  background: #1a1a2e;
+  color: #888;
+  font-weight: 500;
+  border-bottom: 1px solid #333;
+}
+
+.segment-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid #222;
+  vertical-align: top;
+}
+
+.segment-table tr:hover {
+  background: #1a1a2e;
+}
+
+.segment-id {
+  font-family: monospace;
+  font-size: 11px;
+  color: #888;
+}
+
+.timestamp {
+  font-family: monospace;
+  font-size: 12px;
+  color: #60a5fa;
+}
+
+.source-text {
+  color: #e0e0e0;
+}
+
+.translated-text {
+  color: #4ade80;
+}
+
+.segment-table td.actions {
+  white-space: nowrap;
+  min-width: 140px;
+}
+
+.btn-small {
+  padding: 4px 8px;
+  border: none;
+  border-radius: 3px;
+  font-size: 11px;
+  cursor: pointer;
+  margin-right: 4px;
+  font-weight: 500;
+}
+
+.btn-small:last-child {
+  margin-right: 0;
+}
+
+.btn-delete {
+  background: #4a1a1a;
+  color: #f87171;
+}
+
+.btn-delete:hover {
+  background: #5a2a2a;
+}
+
+.btn-retranslate {
+  background: #1a3a4a;
+  color: #60a5fa;
+}
+
+.btn-retranslate:hover {
+  background: #2a4a5a;
+}
+
+.error-section {
+  background: #4a1a1a;
+  border: 1px solid #f87171;
+  border-radius: 6px;
+  padding: 16px;
+  margin-bottom: 24px;
+}
+
+.error-section h3 {
+  color: #f87171;
+  margin-bottom: 8px;
+}
+
+.error-section pre {
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.delete-section {
+  margin-top: 24px;
+  padding-top: 24px;
+  border-top: 1px solid #333;
+}
+
+.btn-danger {
+  background: #e50914;
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.btn-danger:hover {
+  background: #b20710;
+}
+
+.btn-secondary {
+  background: #333;
+  color: #e0e0e0;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.btn-secondary:hover {
+  background: #444;
+}
+
+.modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-content {
+  background: #16213e;
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 24px;
+  max-width: 400px;
+  width: 100%;
+}
+
+.modal-content p {
+  margin-bottom: 16px;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+}

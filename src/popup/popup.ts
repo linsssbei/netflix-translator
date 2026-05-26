@@ -2,9 +2,38 @@ document.addEventListener('DOMContentLoaded', () => {
   const statusEl = document.getElementById('status') as HTMLSpanElement;
   const controlsEl = document.getElementById('controls') as HTMLDivElement;
   const prepareBtn = document.getElementById('prepare-btn') as HTMLButtonElement;
+  const toggleBtn = document.getElementById('toggle-btn') as HTMLButtonElement;
   const targetLangSelect = document.getElementById('target-language') as HTMLSelectElement;
 
+  // Diagnostics elements
+  const diagnosticsEl = document.getElementById('diagnostics') as HTMLDivElement;
+  const diagStatusEl = document.getElementById('diag-status') as HTMLSpanElement;
+  const diagPercentEl = document.getElementById('diag-percent') as HTMLSpanElement;
+  const progressFillEl = document.getElementById('progress-fill') as HTMLDivElement;
+  const diagBatchEl = document.getElementById('diag-batch') as HTMLDivElement;
+  const diagCurrentBatchEl = document.getElementById('diag-current-batch') as HTMLSpanElement;
+  const diagTotalBatchesEl = document.getElementById('diag-total-batches') as HTMLSpanElement;
+  const diagSegmentsEl = document.getElementById('diag-segments') as HTMLDivElement;
+  const diagValidatedCountEl = document.getElementById('diag-validated-count') as HTMLSpanElement;
+  const diagTotalSegmentsEl = document.getElementById('diag-total-segments') as HTMLSpanElement;
+  const diagModelEl = document.getElementById('diag-model') as HTMLDivElement;
+  const diagModelNameEl = document.getElementById('diag-model-name') as HTMLSpanElement;
+  const diagTokensEl = document.getElementById('diag-tokens') as HTMLDivElement;
+  const diagTokenUsageEl = document.getElementById('diag-token-usage') as HTMLSpanElement;
+  const diagErrorEl = document.getElementById('diag-error') as HTMLDivElement;
+  const retryBtn = document.getElementById('retry-btn') as HTMLButtonElement;
+
+  // Segment preview elements
+  const previewPanelEl = document.getElementById('segment-preview') as HTMLDivElement;
+  const previewCountEl = document.getElementById('preview-count') as HTMLSpanElement;
+  const previewToggleBtn = document.getElementById('preview-toggle') as HTMLButtonElement;
+  const previewContentEl = document.getElementById('preview-content') as HTMLDivElement;
+  const previewListEl = document.getElementById('preview-list') as HTMLDivElement;
+
   let currentVideoId: string | null = null;
+  let pollInterval: ReturnType<typeof setInterval> | null = null;
+  let isTranslating = false;
+  let translationEnabled = false;
 
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     const activeTab = tabs[0];
@@ -16,16 +45,12 @@ document.addEventListener('DOMContentLoaded', () => {
       statusEl.textContent = `Video: ${currentVideoId}`;
       controlsEl.classList.remove('hidden');
 
-      // Query current library state
-      chrome.runtime.sendMessage(
-        { type: 'GET_STATUS', videoId: currentVideoId },
-        (response) => {
-          if (response?.readyCount > 0) {
-            statusEl.textContent = `Ready — ${response.readyCount} translation(s)`;
-            prepareBtn.textContent = 'Re-translate';
-          }
-        }
-      );
+      // Query detection status (subtitle availability)
+      queryDetectionStatus();
+      // Also query current library state for diagnostics
+      queryStatus();
+      // Check if translation is currently enabled
+      checkRenderingStatus();
     } else if (url.includes('netflix.com')) {
       statusEl.textContent = 'Navigate to a video';
     } else {
@@ -49,11 +74,45 @@ document.addEventListener('DOMContentLoaded', () => {
       statusEl.textContent = 'No video detected';
       return;
     }
+    startTranslation();
+  });
 
-    statusEl.textContent = 'Preparing translation...';
+  retryBtn.addEventListener('click', () => {
+    if (!currentVideoId) return;
+    startTranslation();
+  });
+
+  toggleBtn.addEventListener('click', () => {
+    if (!currentVideoId) return;
+    toggleTranslation(!translationEnabled);
+  });
+
+  previewToggleBtn.addEventListener('click', () => {
+    const isHidden = previewContentEl.classList.contains('hidden');
+    if (isHidden) {
+      previewContentEl.classList.remove('hidden');
+      previewToggleBtn.textContent = 'Hide Preview';
+      if (currentVideoId) {
+        loadAndRenderSegments(currentVideoId);
+      }
+    } else {
+      previewContentEl.classList.add('hidden');
+      previewToggleBtn.textContent = 'Show Preview';
+    }
+  });
+
+  function startTranslation() {
+    isTranslating = true;
     prepareBtn.disabled = true;
+    prepareBtn.textContent = 'Preparing...';
+    retryBtn.classList.add('hidden');
+    diagErrorEl.classList.add('hidden');
+    toggleBtn.classList.add('hidden');
 
     const targetLanguage = targetLangSelect.value;
+
+    // Start polling immediately
+    startPolling();
 
     chrome.runtime.sendMessage(
       {
@@ -62,17 +121,404 @@ document.addEventListener('DOMContentLoaded', () => {
         targetLanguage,
       },
       (response) => {
-        prepareBtn.disabled = false;
-        if (chrome.runtime.lastError) {
-          statusEl.textContent = 'Error: ' + chrome.runtime.lastError.message;
-          return;
-        }
-        if (response?.status === 'ok') {
-          statusEl.textContent = 'Translation ready!';
-        } else {
-          statusEl.textContent = 'Failed: ' + (response?.message || 'unknown error');
-        }
+        // Stop polling after a short delay to catch final status
+        setTimeout(() => {
+          stopPolling();
+          isTranslating = false;
+          prepareBtn.disabled = false;
+
+          if (chrome.runtime.lastError) {
+            statusEl.textContent = 'Error: ' + chrome.runtime.lastError.message;
+            showError('Runtime error: ' + chrome.runtime.lastError.message);
+            prepareBtn.textContent = 'Retry Translation';
+            updateToggleVisibility();
+            return;
+          }
+          if (response?.status === 'ok') {
+            statusEl.textContent = 'Translation ready!';
+            prepareBtn.textContent = 'Re-translate';
+            diagnosticsEl.classList.add('hidden');
+            updateToggleVisibility();
+            // Auto-enable translation after successful preparation
+            toggleTranslation(true);
+          } else {
+            const msg = response?.message || 'unknown error';
+            statusEl.textContent = 'Failed: ' + msg;
+            showError(msg);
+            prepareBtn.textContent = 'Retry Translation';
+            updateToggleVisibility();
+          }
+          // Final status query
+          queryStatus();
+        }, 1000);
       }
     );
+  }
+
+  function toggleTranslation(enabled: boolean) {
+    translationEnabled = enabled;
+    const targetLanguage = targetLangSelect.value;
+
+    chrome.runtime.sendMessage(
+      {
+        type: 'TOGGLE_TRANSLATION',
+        enabled,
+        videoId: currentVideoId,
+        targetLanguage,
+      },
+      () => {
+        if (chrome.runtime.lastError) {
+          console.error('Toggle error:', chrome.runtime.lastError.message);
+          return;
+        }
+        updateToggleButton();
+      }
+    );
+  }
+
+  function checkRenderingStatus() {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const activeTab = tabs[0];
+      if (!activeTab?.id) return;
+
+      chrome.tabs.sendMessage(
+        activeTab.id,
+        { type: 'GET_RENDERING_STATUS' },
+        (response) => {
+          if (chrome.runtime.lastError) {
+            // Content script may not be loaded yet
+            return;
+          }
+          if (response && response.status === 'ok') {
+            translationEnabled = response.enabled;
+            updateToggleButton();
+            updateToggleVisibility();
+          }
+        }
+      );
+    });
+  }
+
+  function updateToggleButton() {
+    if (translationEnabled) {
+      toggleBtn.textContent = 'Disable Translation';
+      toggleBtn.classList.remove('hidden');
+    } else {
+      toggleBtn.textContent = 'Enable Translation';
+    }
+  }
+
+  function updateToggleVisibility() {
+    if (!currentVideoId) return;
+
+    // Only show toggle if we have ready translations
+    chrome.runtime.sendMessage(
+      { type: 'GET_STATUS', videoId: currentVideoId },
+      (response) => {
+        if (chrome.runtime.lastError) return;
+        if (!response || response.status === 'error') return;
+
+        const hasReadyTranslations = response.readyCount > 0;
+        if (hasReadyTranslations) {
+          toggleBtn.classList.remove('hidden');
+        } else {
+          toggleBtn.classList.add('hidden');
+          translationEnabled = false;
+        }
+        updateToggleButton();
+      }
+    );
+  }
+
+  function startPolling() {
+    diagnosticsEl.classList.remove('hidden');
+    stopPolling();
+    queryStatus(); // Immediate first query
+    pollInterval = setInterval(() => queryStatus(), 500);
+  }
+
+  function stopPolling() {
+    if (pollInterval) {
+      clearInterval(pollInterval);
+      pollInterval = null;
+    }
+  }
+
+  function queryDetectionStatus() {
+    if (!currentVideoId) return;
+
+    chrome.runtime.sendMessage(
+      { type: 'GET_DETECTION_STATUS', videoId: currentVideoId },
+      (response) => {
+        if (chrome.runtime.lastError) {
+          console.error('Detection status query error:', chrome.runtime.lastError.message);
+          return;
+        }
+        if (!response || response.status === 'error') return;
+        updateDetectionStatus(response);
+      }
+    );
+  }
+
+  function updateDetectionStatus(data: {
+    status: string;
+    videoId: string;
+    savedHash?: string;
+    detectedHash?: string;
+    sourceLanguage?: string;
+  }) {
+    const detectionStatus = data.status;
+
+    if (detectionStatus === 'no-subtitle') {
+      statusEl.textContent = 'No subtitle detected for this video yet.';
+      prepareBtn.disabled = true;
+      prepareBtn.textContent = 'Prepare Subtitles';
+      prepareBtn.title = 'Wait for subtitle detection before preparing';
+    } else if (detectionStatus === 'subtitle-detected') {
+      statusEl.textContent = 'Subtitle detected! Click Prepare to save and translate.';
+      prepareBtn.disabled = false;
+      prepareBtn.textContent = 'Prepare Subtitles';
+      prepareBtn.title = '';
+    } else if (detectionStatus === 'already-saved') {
+      if (data.savedHash === data.detectedHash) {
+        statusEl.textContent = 'Same subtitle already saved. Nothing changed.';
+      } else {
+        statusEl.textContent = 'Subtitle already saved for this video.';
+      }
+      prepareBtn.disabled = false;
+      prepareBtn.textContent = 'Re-translate';
+      prepareBtn.title = '';
+      updateToggleVisibility();
+    } else if (detectionStatus === 'new-hash-detected') {
+      statusEl.textContent = 'New subtitle detected! Existing translations will be marked stale.';
+      prepareBtn.disabled = false;
+      prepareBtn.textContent = 'Prepare Subtitles';
+      prepareBtn.title = '';
+    }
+  }
+
+  function queryStatus() {
+    if (!currentVideoId) return;
+
+    chrome.runtime.sendMessage(
+      { type: 'GET_STATUS', videoId: currentVideoId },
+      (response) => {
+        if (chrome.runtime.lastError) {
+          console.error('Status query error:', chrome.runtime.lastError.message);
+          return;
+        }
+        if (!response || response.status === 'error') return;
+        updateDiagnostics(response);
+      }
+    );
+  }
+
+  function updateDiagnostics(data: {
+    status: string;
+    isRetryable: boolean;
+    readyCount: number;
+    progress?: {
+      currentBatch: number;
+      totalBatches: number;
+      validatedSegmentCount: number;
+      totalSegmentCount: number;
+      providerModel: string;
+      latestError?: string;
+    };
+    errorMessage?: string;
+    debugInfo?: {
+      model: string;
+      usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number };
+    };
+    preparingSince?: number;
+    partialSegments?: Array<{ id: string; startMs: number; endMs: number; translatedText: string }>;
+  }) {
+    const status = data.status;
+
+    // Update button state based on current status
+    if (!isTranslating) {
+      if (data.isRetryable && data.readyCount === 0) {
+        prepareBtn.textContent = 'Retry Translation';
+      } else if (data.readyCount > 0) {
+        prepareBtn.textContent = 'Re-translate';
+      } else {
+        prepareBtn.textContent = 'Prepare Subtitles';
+      }
+    }
+
+    // Show diagnostics for active/failed translations
+    if (status === 'preparing' || status === 'translation-failed') {
+      diagnosticsEl.classList.remove('hidden');
+    } else {
+      diagnosticsEl.classList.add('hidden');
+    }
+
+    // Show preview panel whenever we have segments (partial or ready)
+    const hasSegments = (data.partialSegments && data.partialSegments.length > 0) || data.readyCount > 0;
+    if (hasSegments) {
+      previewPanelEl.classList.remove('hidden');
+      const count = data.partialSegments?.length ?? data.readyCount;
+      previewCountEl.textContent = `${count} segment(s)`;
+      previewToggleBtn.textContent = 'Hide Preview';
+      previewContentEl.classList.remove('hidden');
+      renderSegments(data.partialSegments ?? []);
+    } else {
+      previewPanelEl.classList.add('hidden');
+    }
+
+    // Update toggle visibility based on ready translations
+    if (data.readyCount > 0 && !isTranslating) {
+      toggleBtn.classList.remove('hidden');
+    } else if (!isTranslating) {
+      toggleBtn.classList.add('hidden');
+    }
+
+    // Status text
+    if (status === 'preparing') {
+      diagStatusEl.textContent = 'Translating...';
+    } else if (status === 'translation-failed') {
+      diagStatusEl.textContent = 'Translation failed';
+    } else if (status === 'translation-ready') {
+      diagStatusEl.textContent = 'Translation ready';
+    } else {
+      diagStatusEl.textContent = 'Waiting for subtitles...';
+    }
+
+    // Progress bar
+    const progress = data.progress;
+    if (progress && progress.totalBatches > 0) {
+      const percent = Math.round((progress.currentBatch / progress.totalBatches) * 100);
+      diagPercentEl.textContent = `${percent}%`;
+      progressFillEl.style.width = `${percent}%`;
+
+      diagBatchEl.classList.remove('hidden');
+      diagCurrentBatchEl.textContent = String(progress.currentBatch);
+      diagTotalBatchesEl.textContent = String(progress.totalBatches);
+
+      diagSegmentsEl.classList.remove('hidden');
+      diagValidatedCountEl.textContent = String(progress.validatedSegmentCount);
+      diagTotalSegmentsEl.textContent = String(progress.totalSegmentCount);
+
+      diagModelEl.classList.remove('hidden');
+      diagModelNameEl.textContent = progress.providerModel || data.debugInfo?.model || '-';
+    } else {
+      diagPercentEl.textContent = '0%';
+      progressFillEl.style.width = '0%';
+      diagBatchEl.classList.add('hidden');
+      diagSegmentsEl.classList.add('hidden');
+      diagModelEl.classList.add('hidden');
+    }
+
+    // Token usage
+    if (data.debugInfo?.usage) {
+      diagTokensEl.classList.remove('hidden');
+      const u = data.debugInfo.usage;
+      diagTokenUsageEl.textContent = `${u.promptTokens ?? '?'} prompt / ${u.completionTokens ?? '?'} completion`;
+    } else {
+      diagTokensEl.classList.add('hidden');
+    }
+
+    // Error display
+    const errorMsg = data.errorMessage || progress?.latestError;
+    if (errorMsg) {
+      showError(errorMsg);
+      retryBtn.classList.remove('hidden');
+    } else if (status !== 'translation-failed') {
+      diagErrorEl.classList.add('hidden');
+      retryBtn.classList.add('hidden');
+    }
+  }
+
+  function showError(message: string) {
+    diagErrorEl.textContent = message;
+    diagErrorEl.classList.remove('hidden');
+  }
+
+  function renderSegments(
+    segments: Array<{ id: string; startMs: number; endMs: number; translatedText: string }>
+  ) {
+    if (segments.length === 0) {
+      previewListEl.innerHTML = '<div class="preview-item">No segments yet</div>';
+      return;
+    }
+
+    previewListEl.innerHTML = segments
+      .map((s) => {
+        const time = formatTime(s.startMs) + ' → ' + formatTime(s.endMs);
+        return `
+          <div class="preview-item">
+            <div class="preview-time">${time}</div>
+            <div class="preview-translated">${escapeHtml(s.translatedText)}</div>
+          </div>
+        `;
+      })
+      .join('');
+  }
+
+  function loadAndRenderSegments(videoId: string) {
+    const targetLanguage = targetLangSelect.value;
+
+    chrome.runtime.sendMessage(
+      { type: 'GET_SEGMENTS', videoId, targetLanguage },
+      (response) => {
+        if (chrome.runtime.lastError) {
+          previewListEl.innerHTML = `<div class="preview-item">Error loading segments: ${chrome.runtime.lastError.message}</div>`;
+          return;
+        }
+        if (!response || response.status === 'error') {
+          previewListEl.innerHTML = `<div class="preview-item">Failed to load segments</div>`;
+          return;
+        }
+
+        const segments = response.segments as Array<{
+          id: string;
+          startMs: number;
+          endMs: number;
+          sourceText: string;
+          translatedText: string;
+        }>;
+
+        previewCountEl.textContent = `${response.count} segments`;
+
+        if (segments.length === 0) {
+          previewListEl.innerHTML = '<div class="preview-item">No translated segments found</div>';
+          return;
+        }
+
+        previewListEl.innerHTML = segments
+          .map((s) => {
+            const time = formatTime(s.startMs) + ' → ' + formatTime(s.endMs);
+            return `
+              <div class="preview-item">
+                <div class="preview-time">${time}</div>
+                ${s.sourceText ? `<div class="preview-source">${escapeHtml(s.sourceText)}</div>` : ''}
+                <div class="preview-translated">${escapeHtml(s.translatedText)}</div>
+              </div>
+            `;
+          })
+          .join('');
+      }
+    );
+  }
+
+  function formatTime(ms: number): string {
+    const totalSeconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    const millis = Math.floor((ms % 1000) / 10);
+    return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}.${millis.toString().padStart(2, '0')}`;
+  }
+
+  function escapeHtml(text: string): string {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
+  // Library link
+  const libraryLink = document.getElementById('library-link') as HTMLAnchorElement;
+  libraryLink.addEventListener('click', (e) => {
+    e.preventDefault();
+    chrome.tabs.create({ url: chrome.runtime.getURL('library.html') });
   });
 });

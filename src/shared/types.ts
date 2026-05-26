@@ -127,6 +127,60 @@ export interface TranslatedArtifact {
 }
 
 /**
+ * Debug summary for the latest translation provider interaction.
+ */
+export interface TranslationDebugInfo {
+  /** Associated video ID */
+  videoId: string;
+  /** Translation provider model */
+  model: string;
+  /** Number of source segments requested */
+  segmentCount: number;
+  /** Translation strategy */
+  strategy: 'batch';
+  /** Provider request lifecycle phase */
+  requestPhase?: 'started' | 'completed' | 'failed';
+  /** Provider finish reason when available */
+  finishReason?: string;
+  /** Provider request ID when available */
+  requestId?: string;
+  /** Raw response content length */
+  responseContentLength?: number;
+  /** Small raw response preview for debugging parse failures */
+  responsePreview?: string;
+  /** Token usage reported by provider */
+  usage?: {
+    promptTokens?: number;
+    completionTokens?: number;
+    totalTokens?: number;
+  };
+  /** Number of segments that passed validation */
+  validatedCount?: number;
+  /** Error observed before fallback or final failure */
+  errorMessage?: string;
+  /** When this debug record was written */
+  updatedAt: number;
+}
+
+/**
+ * Progress metadata for batch translation
+ */
+export interface TranslationProgressInfo {
+  /** Current batch number (1-indexed) */
+  currentBatch: number;
+  /** Total number of batches */
+  totalBatches: number;
+  /** Number of segments validated so far */
+  validatedSegmentCount: number;
+  /** Total number of segments to translate */
+  totalSegmentCount: number;
+  /** Provider model being used */
+  providerModel: string;
+  /** Latest error or debug summary, if any */
+  latestError?: string;
+}
+
+/**
  * Status of subtitle preparation for a video
  */
 export type PreparationStatus =
@@ -139,6 +193,28 @@ export type PreparationStatus =
   | 'translation-failed'
   | 'stale-translation'
   | 'rendering-active';
+
+/**
+ * Quality diagnostics for a translated artifact
+ */
+export interface QualityDiagnostics {
+  /** Total source segment count */
+  sourceSegmentCount: number;
+  /** Translated segment count */
+  translatedSegmentCount: number;
+  /** Missing translated segment count */
+  missingSegmentCount: number;
+  /** Empty translated segment count */
+  emptyTranslationCount: number;
+  /** Whether the translation is stale */
+  isStale: boolean;
+  /** Provider used */
+  provider?: TranslationProvider;
+  /** Provider model */
+  providerModel?: string;
+  /** When the translation was prepared */
+  preparedAt?: number;
+}
 
 /**
  * Subtitle metadata and preparation tracking stored in local storage
@@ -158,14 +234,28 @@ export interface SubtitleLibraryEntry {
   status: PreparationStatus;
   /** When this entry was last updated */
   updatedAt: number;
+  /** Optional: video title (if known) */
+  videoTitle?: string;
   /** Optional: subtitle resource metadata (if source was acquired) */
   subtitleResource?: SubtitleResource;
   /** Optional: raw subtitle payload (for translation processing) */
   sourcePayload?: string;
+  /** Optional: source segment count */
+  sourceSegmentCount?: number;
+  /** Optional: translated segment count */
+  translatedSegmentCount?: number;
   /** Optional: translated artifact (if preparation succeeded) */
   translatedArtifact?: TranslatedArtifact;
   /** Optional: error message if preparation failed */
   errorMessage?: string;
+  /** Optional: latest translation provider debug summary */
+  translationDebug?: TranslationDebugInfo;
+  /** Optional: batch translation progress metadata */
+  translationProgress?: TranslationProgressInfo;
+  /** Optional: timestamp when preparation started (to detect stale preparing state) */
+  preparingSince?: number;
+  /** Optional: accumulated partial translated segments from completed batches */
+  partialSegments?: TranslatedSegment[];
 }
 
 /**
@@ -183,15 +273,54 @@ export interface ExtensionSettings {
 }
 
 /**
+ * Detection status for the popup's subtitle availability check
+ */
+export type DetectionStatus =
+  | 'no-video'
+  | 'no-subtitle'
+  | 'subtitle-detected'
+  | 'already-saved'
+  | 'new-hash-detected';
+
+/**
  * Message types for runtime communication
  */
 export type ExtensionMessage =
   | { type: 'PAGE_LOADED'; url: string; timestamp: number }
   | { type: 'VIDEO_DETECTED'; videoId: string; url: string }
   | { type: 'VIDEO_CHANGED'; videoId: string; url: string }
-  | { type: 'SUBTITLE_CANDIDATE'; resource: SubtitleResource }
+  | { type: 'SUBTITLE_CANDIDATE'; resource: SubtitleResource; payload?: string }
   | { type: 'PREPARE_SUBTITLES'; videoId: string; targetLanguage: string }
   | { type: 'PREPARATION_STATUS'; status: PreparationStatus; videoId: string }
-  | { type: 'TOGGLE_TRANSLATION'; enabled: boolean }
-  | { type: 'GET_STATUS' }
-  | { type: 'STATUS_RESPONSE'; status: PreparationStatus; videoId?: string };
+  | { type: 'TOGGLE_TRANSLATION'; enabled: boolean; videoId?: string; targetLanguage?: string }
+  | { type: 'GET_RENDERING_STATUS' }
+  | { type: 'GET_STATUS'; videoId: string }
+  | { type: 'STATUS_RESPONSE'; status: PreparationStatus; videoId?: string }
+  | { type: 'GET_SEGMENTS'; videoId: string; targetLanguage: string }
+  | { type: 'SEGMENTS_RESPONSE'; segments: Array<{ id: string; startMs: number; endMs: number; sourceText: string; translatedText: string }>; count: number; }
+  | { type: 'DELETE_SEGMENT'; videoId: string; sourceLanguage: string; targetLanguage: string; sourceSubtitleHash: string; segmentId: string }
+  | { type: 'RETRANSLATE_SEGMENT'; videoId: string; sourceLanguage: string; targetLanguage: string; sourceSubtitleHash: string; segmentId: string }
+  | { type: 'GET_DETECTION_STATUS'; videoId: string }
+  | { type: 'DETECTION_STATUS_RESPONSE'; status: DetectionStatus; videoId: string; savedHash?: string; detectedHash?: string; sourceLanguage?: string };
+
+/**
+ * Detailed status response for the popup diagnostics panel
+ */
+export interface DetailedStatusResponse {
+  status: PreparationStatus;
+  videoId: string;
+  entryCount: number;
+  readyCount: number;
+  /** Whether the current status allows retry/resume */
+  isRetryable: boolean;
+  /** Current batch progress if preparing */
+  progress?: TranslationProgressInfo;
+  /** Latest error message if failed */
+  errorMessage?: string;
+  /** Latest debug info from provider */
+  debugInfo?: TranslationDebugInfo;
+  /** When preparation started (to detect stale state) */
+  preparingSince?: number;
+  /** Accumulated partial translated segments from completed batches */
+  partialSegments?: TranslatedSegment[];
+}

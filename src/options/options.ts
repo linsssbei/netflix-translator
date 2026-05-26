@@ -19,8 +19,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (!customEndpointInput.value || customEndpointInput.value.includes('deepseek')) {
         customEndpointInput.value = 'https://api.deepseek.com/v1/chat/completions';
       }
-      if (!modelInput.value || modelInput.value === 'gpt-4o-mini') {
-        modelInput.value = 'deepseek-chat';
+      if (
+        !modelInput.value ||
+        modelInput.value === 'gpt-4o-mini' ||
+        modelInput.value === 'deepseek-chat'
+      ) {
+        modelInput.value = 'deepseek-v4-pro';
       }
     } else if (provider === 'openai') {
       customEndpointInput.value = 'https://api.openai.com/v1/chat/completions';

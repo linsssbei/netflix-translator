@@ -4,6 +4,7 @@ import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import {
   parseTtml,
+  parseTtmlWithRegex,
   parseSubtitlePayload,
   parseTtmlTime,
   generateTranslationInput,
@@ -54,10 +55,17 @@ describe('parseTtmlTime', () => {
     expect(parseTtmlTime('0')).toBe(0);
   });
 
+  it('parses tick-based timing with an explicit tick rate', () => {
+    expect(parseTtmlTime('465882084t', 10_000_000)).toBe(46588);
+    expect(parseTtmlTime('50000000t', 10_000_000)).toBe(5000);
+  });
+
   it('returns 0 for invalid input', () => {
     expect(parseTtmlTime('')).toBe(0);
     expect(parseTtmlTime('invalid')).toBe(0);
     expect(parseTtmlTime('abc')).toBe(0);
+    expect(parseTtmlTime('465882084t')).toBe(0);
+    expect(parseTtmlTime('123abc')).toBe(0);
   });
 });
 
@@ -118,13 +126,13 @@ describe('parseTtml', () => {
     expect(segments[2].sourceText).toBe('テストです');
   });
 
-  it('generates stable segment IDs based on index and timing', () => {
+  it('generates stable segment IDs based on index', () => {
     const payload = loadFixture('minimal-ttml.xml');
     const segments = parseTtml(payload);
 
-    expect(segments[0].id).toMatch(/^seg_\d+_\d+_\d+$/);
-    expect(segments[0].id).toBe('seg_0_0_3500');
-    expect(segments[1].id).toBe('seg_1_3500_7000');
+    expect(segments[0].id).toMatch(/^seg_\d+$/);
+    expect(segments[0].id).toBe('seg_0');
+    expect(segments[1].id).toBe('seg_1');
   });
 
   it('sorts segments by start time', () => {
@@ -144,6 +152,23 @@ describe('parseTtml', () => {
     expect(segments[0].sourceText).toBe('First');
     expect(segments[1].sourceText).toBe('Second');
     expect(segments[2].sourceText).toBe('Third');
+  });
+
+  it('uses TTML tickRate for tick-based begin and end values', () => {
+    const payload = `<?xml version="1.0"?>
+      <tt xmlns:ttp="http://www.w3.org/ns/ttml#parameter" ttp:tickRate="10000000">
+        <body>
+          <div>
+            <p begin="465882084t" end="485882084t">Tick timed text</p>
+          </div>
+        </body>
+      </tt>`;
+
+    const segments = parseTtml(payload);
+
+    expect(segments).toHaveLength(1);
+    expect(segments[0].startMs).toBe(46588);
+    expect(segments[0].endMs).toBe(48588);
   });
 
   it('throws when no paragraphs have timing attributes', () => {
@@ -168,6 +193,21 @@ describe('parseTtml', () => {
     try {
       const payload = loadFixture('minimal-ttml.xml');
       const segments = parseTtml(payload);
+      expect(segments).toHaveLength(3);
+      expect(segments[0].sourceText).toBe('こんにちは');
+      expect(segments[1].sourceText).toBe('ありがとうございます');
+    } finally {
+      (globalThis as any).DOMParser = origParser;
+    }
+  });
+
+  it('exposes a service-worker-safe TTML parser that does not need DOMParser', () => {
+    const origParser = (globalThis as any).DOMParser;
+    delete (globalThis as any).DOMParser;
+
+    try {
+      const payload = loadFixture('minimal-ttml.xml');
+      const segments = parseTtmlWithRegex(payload);
       expect(segments).toHaveLength(3);
       expect(segments[0].sourceText).toBe('こんにちは');
       expect(segments[1].sourceText).toBe('ありがとうございます');

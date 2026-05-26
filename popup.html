@@ -20,7 +20,40 @@
         <option value="en">English</option>
       </select>
       <button id="prepare-btn">Prepare Subtitles</button>
-      <button id="toggle-btn">Enable Translation</button>
+      <button id="toggle-btn" class="hidden">Enable Translation</button>
+    </div>
+    <!-- Diagnostics Panel -->
+    <div id="diagnostics" class="hidden">
+      <div class="diagnostics-header">
+        <span id="diag-status">Preparing...</span>
+        <span id="diag-percent">0%</span>
+      </div>
+      <div class="progress-bar">
+        <div id="progress-fill" class="progress-fill" style="width: 0%"></div>
+      </div>
+      <div class="diagnostics-details">
+        <div id="diag-batch" class="hidden">Batch <span id="diag-current-batch">0</span> / <span id="diag-total-batches">0</span></div>
+        <div id="diag-segments" class="hidden"><span id="diag-validated-count">0</span> / <span id="diag-total-segments">0</span> segments</div>
+        <div id="diag-model" class="hidden">Model: <span id="diag-model-name">-</span></div>
+        <div id="diag-tokens" class="hidden">Tokens: <span id="diag-token-usage">-</span></div>
+      </div>
+      <div id="diag-error" class="hidden error-box"></div>
+      <button id="retry-btn" class="hidden secondary">Retry Translation</button>
+    </div>
+
+    <!-- Segment Preview -->
+    <div id="segment-preview" class="hidden">
+      <div class="preview-header">
+        <span id="preview-count">0 segments</span>
+        <button id="preview-toggle" class="text-btn">Show Preview</button>
+      </div>
+      <div id="preview-content" class="hidden">
+        <div id="preview-list" class="preview-list"></div>
+      </div>
+    </div>
+
+    <div class="footer">
+      <a href="#" id="library-link">📚 Subtitle Library</a>
     </div>
   </div>
   <script type="module" src="./src/popup/popup.ts"></script>

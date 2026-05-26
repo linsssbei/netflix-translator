@@ -1,148 +1,53 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
-  callTranslationAPI,
+  validateBatchResponse,
   validateTranslationResponse,
   prepareTranslation,
-  DEFAULT_PROVIDER_CONFIG,
+  validateBatchResponseDetailed,
 } from '../shared/translator-agent';
 import type {
   CleanedTranslationInput,
 } from '../shared/types';
+import { generateObject } from 'ai';
 
 const mockInput: CleanedTranslationInput = {
   targetLanguage: 'zh-CN',
   segments: [
-    { id: 'seg_0_0_5000', startMs: 0, endMs: 5000, sourceText: 'Hello world' },
-    { id: 'seg_1_5000_10000', startMs: 5000, endMs: 10000, sourceText: 'How are you?' },
-    { id: 'seg_2_10000_15000', startMs: 10000, endMs: 15000, sourceText: 'This is a test.' },
+    { id: 'seg_0', startMs: 0, endMs: 5000, sourceText: 'Hello world' },
+    { id: 'seg_1', startMs: 5000, endMs: 10000, sourceText: 'How are you?' },
+    { id: 'seg_2', startMs: 10000, endMs: 15000, sourceText: 'This is a test.' },
   ],
 };
 
-function mockApiResponse(segments: Array<{ id: string; translatedText: string }>) {
+// Mock the AI SDK module
+vi.mock('ai', () => ({
+  generateObject: vi.fn(),
+}));
+
+vi.mock('@ai-sdk/deepseek', () => ({
+  createDeepSeek: vi.fn(() => vi.fn(() => ({ modelId: 'deepseek-chat' }))),
+}));
+
+vi.mock('@ai-sdk/openai', () => ({
+  createOpenAI: vi.fn(() => vi.fn(() => ({ modelId: 'gpt-4o' }))),
+}));
+
+function mockGenerateObjectResult(segments: Array<{ id: string; translatedText: string }>) {
   return {
-    ok: true,
-    status: 200,
-    json: () =>
-      Promise.resolve({
-        choices: [
-          {
-            message: {
-              content: JSON.stringify({ segments }),
-            },
-          },
-        ],
-      }),
-    text: () => Promise.resolve(''),
+    object: { segments },
+    usage: {
+      inputTokens: 100,
+      outputTokens: 50,
+    },
   };
 }
 
-describe('callTranslationAPI', () => {
-  beforeEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it('calls the API with correct format', async () => {
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      mockApiResponse([
-        { id: 'seg_0_0_5000', translatedText: '你好世界' },
-        { id: 'seg_1_5000_10000', translatedText: '你好吗？' },
-        { id: 'seg_2_10000_15000', translatedText: '这是测试。' },
-      ]) as Response
-    );
-
-    const result = await callTranslationAPI(mockInput, {
-      apiKey: 'test-key',
-    });
-
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-    const callArgs = fetchSpy.mock.calls[0];
-    expect(callArgs[0]).toBe(DEFAULT_PROVIDER_CONFIG.endpoint);
-
-    const body = JSON.parse((callArgs[1] as RequestInit).body as string);
-    expect(body.model).toBe(DEFAULT_PROVIDER_CONFIG.model);
-    expect(body.messages).toHaveLength(2);
-    expect(body.messages[0].role).toBe('system');
-    expect(body.messages[1].role).toBe('user');
-    expect(body.response_format).toEqual({ type: 'json_object' });
-
-    expect(result).toHaveLength(3);
-    expect(result[0].translatedText).toBe('你好世界');
-  });
-
-  it('uses custom endpoint and model when provided', async () => {
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      mockApiResponse([{ id: 'seg_0_0_5000', translatedText: 'test' }]) as Response
-    );
-
-    await callTranslationAPI(mockInput, {
-      apiKey: 'test-key',
-      endpoint: 'https://custom.api/v1/chat/completions',
-      model: 'custom-model',
-    });
-
-    const body = JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string);
-    expect(body.model).toBe('custom-model');
-    expect(fetchSpy.mock.calls[0][0]).toBe('https://custom.api/v1/chat/completions');
-  });
-
-  it('throws on API error', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-      ok: false,
-      status: 401,
-      text: () => Promise.resolve('Unauthorized'),
-    } as Response);
-
-    await expect(
-      callTranslationAPI(mockInput, { apiKey: 'bad-key' })
-    ).rejects.toThrow('Translation API error (401)');
-  });
-
-  it('throws on empty response', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ choices: [] }),
-    } as Response);
-
-    await expect(
-      callTranslationAPI(mockInput, { apiKey: 'test-key' })
-    ).rejects.toThrow('empty response');
-  });
-
-  it('throws on invalid JSON response', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-      ok: true,
-      json: () =>
-        Promise.resolve({
-          choices: [{ message: { content: 'not json' } }],
-        }),
-    } as Response);
-
-    await expect(
-      callTranslationAPI(mockInput, { apiKey: 'test-key' })
-    ).rejects.toThrow('Failed to parse');
-  });
-
-  it('throws when segments array is missing', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-      ok: true,
-      json: () =>
-        Promise.resolve({
-          choices: [{ message: { content: '{"other": "data"}' } }],
-        }),
-    } as Response);
-
-    await expect(
-      callTranslationAPI(mockInput, { apiKey: 'test-key' })
-    ).rejects.toThrow('missing segments array');
-  });
-});
-
-describe('validateTranslationResponse', () => {
-  it('validates a correct response', () => {
-    const result = validateTranslationResponse(mockInput.segments, [
-      { id: 'seg_0_0_5000', translatedText: '你好世界' },
-      { id: 'seg_1_5000_10000', translatedText: '你好吗？' },
-      { id: 'seg_2_10000_15000', translatedText: '这是测试。' },
+describe('validateBatchResponse', () => {
+  it('validates a correct batch response', () => {
+    const result = validateBatchResponse(mockInput.segments, [
+      { id: 'seg_0', translatedText: '你好世界' },
+      { id: 'seg_1', translatedText: '你好吗？' },
+      { id: 'seg_2', translatedText: '这是测试。' },
     ]);
 
     expect(result.valid).toBe(true);
@@ -153,10 +58,10 @@ describe('validateTranslationResponse', () => {
   });
 
   it('preserves timing from input', () => {
-    const result = validateTranslationResponse(mockInput.segments, [
-      { id: 'seg_0_0_5000', translatedText: 'a' },
-      { id: 'seg_1_5000_10000', translatedText: 'b' },
-      { id: 'seg_2_10000_15000', translatedText: 'c' },
+    const result = validateBatchResponse(mockInput.segments, [
+      { id: 'seg_0', translatedText: 'a' },
+      { id: 'seg_1', translatedText: 'b' },
+      { id: 'seg_2', translatedText: 'c' },
     ]);
 
     expect(result.valid).toBe(true);
@@ -165,20 +70,20 @@ describe('validateTranslationResponse', () => {
   });
 
   it('rejects when segments are missing', () => {
-    const result = validateTranslationResponse(mockInput.segments, [
-      { id: 'seg_0_0_5000', translatedText: 'hello' },
+    const result = validateBatchResponse(mockInput.segments, [
+      { id: 'seg_0', translatedText: 'hello' },
       // Missing seg_1 and seg_2
     ]);
 
     expect(result.valid).toBe(false);
-    expect(result.reason).toContain('Missing translated segments');
+    expect(result.reason).toContain('empty or missing');
   });
 
   it('rejects when extra segments appear', () => {
-    const result = validateTranslationResponse(mockInput.segments, [
-      { id: 'seg_0_0_5000', translatedText: 'hello' },
-      { id: 'seg_1_5000_10000', translatedText: 'hello' },
-      { id: 'seg_2_10000_15000', translatedText: 'hello' },
+    const result = validateBatchResponse(mockInput.segments, [
+      { id: 'seg_0', translatedText: 'hello' },
+      { id: 'seg_1', translatedText: 'hello' },
+      { id: 'seg_2', translatedText: 'hello' },
       { id: 'seg_99_extra', translatedText: 'extra' },
     ]);
 
@@ -187,37 +92,142 @@ describe('validateTranslationResponse', () => {
   });
 
   it('rejects when translations are empty', () => {
-    const result = validateTranslationResponse(mockInput.segments, [
-      { id: 'seg_0_0_5000', translatedText: 'hello' },
-      { id: 'seg_1_5000_10000', translatedText: '' },
-      { id: 'seg_2_10000_15000', translatedText: 'test' },
+    const result = validateBatchResponse(mockInput.segments, [
+      { id: 'seg_0', translatedText: 'hello' },
+      { id: 'seg_1', translatedText: '' },
+      { id: 'seg_2', translatedText: 'test' },
     ]);
 
     expect(result.valid).toBe(false);
-    expect(result.reason).toContain('empty translations');
+    expect(result.reason).toContain('empty or missing');
   });
 
   it('rejects when all segment IDs are wrong', () => {
-    const result = validateTranslationResponse(mockInput.segments, [
+    const result = validateBatchResponse(mockInput.segments, [
       { id: 'wrong_1', translatedText: 'a' },
       { id: 'wrong_2', translatedText: 'b' },
       { id: 'wrong_3', translatedText: 'c' },
     ]);
 
     expect(result.valid).toBe(false);
-    expect(result.reason).toContain('Missing');
+    expect(result.reason).toContain('Unexpected segment IDs');
+  });
+
+  it('rejects duplicate IDs in response', () => {
+    const result = validateBatchResponse(mockInput.segments, [
+      { id: 'seg_0', translatedText: 'hello' },
+      { id: 'seg_0', translatedText: 'world' },
+      { id: 'seg_1', translatedText: 'test' },
+      { id: 'seg_2', translatedText: 'test2' },
+    ]);
+
+    expect(result.valid).toBe(false);
+    expect(result.reason).toContain('Duplicate');
   });
 
   it('trims whitespace from translations', () => {
-    const result = validateTranslationResponse(mockInput.segments, [
-      { id: 'seg_0_0_5000', translatedText: '  hello  ' },
-      { id: 'seg_1_5000_10000', translatedText: '\nworld\t' },
-      { id: 'seg_2_10000_15000', translatedText: 'test' },
+    const result = validateBatchResponse(mockInput.segments, [
+      { id: 'seg_0', translatedText: '  hello  ' },
+      { id: 'seg_1', translatedText: '\nworld\t' },
+      { id: 'seg_2', translatedText: 'test' },
     ]);
 
     expect(result.valid).toBe(true);
     expect(result.validatedSegments[0].translatedText).toBe('hello');
     expect(result.validatedSegments[1].translatedText).toBe('world');
+  });
+
+  it('works as backward-compatible alias for validateTranslationResponse', () => {
+    const result = validateTranslationResponse(mockInput.segments, [
+      { id: 'seg_0', translatedText: '你好世界' },
+      { id: 'seg_1', translatedText: '你好吗？' },
+      { id: 'seg_2', translatedText: '这是测试。' },
+    ]);
+
+    expect(result.valid).toBe(true);
+    expect(result.validatedSegments).toHaveLength(3);
+  });
+});
+
+// ─── validateBatchResponseDetailed ─────────────────────────────────
+
+describe('validateBatchResponseDetailed', () => {
+  it('returns all valid for complete correct response', () => {
+    const result = validateBatchResponseDetailed(mockInput.segments, [
+      { id: 'seg_0', translatedText: '你好世界' },
+      { id: 'seg_1', translatedText: '你好吗？' },
+      { id: 'seg_2', translatedText: '这是测试。' },
+    ]);
+
+    expect(result.valid).toBe(true);
+    expect(result.validSegments).toHaveLength(3);
+    expect(result.invalidIds).toEqual([]);
+    expect(result.isPartialFailure).toBe(false);
+  });
+
+  it('detects partial failure with one empty translation', () => {
+    const result = validateBatchResponseDetailed(mockInput.segments, [
+      { id: 'seg_0', translatedText: '你好世界' },
+      { id: 'seg_1', translatedText: '' },
+      { id: 'seg_2', translatedText: '这是测试。' },
+    ]);
+
+    expect(result.valid).toBe(false);
+    expect(result.isPartialFailure).toBe(true);
+    expect(result.validSegments).toHaveLength(2);
+    expect(result.invalidIds).toEqual(['seg_1']);
+    expect(result.validSegments[0].id).toBe('seg_0');
+    expect(result.validSegments[1].id).toBe('seg_2');
+  });
+
+  it('detects partial failure with one missing segment', () => {
+    const result = validateBatchResponseDetailed(mockInput.segments, [
+      { id: 'seg_0', translatedText: '你好世界' },
+      { id: 'seg_2', translatedText: '这是测试。' },
+    ]);
+
+    expect(result.valid).toBe(false);
+    expect(result.isPartialFailure).toBe(true);
+    expect(result.validSegments).toHaveLength(2);
+    expect(result.invalidIds).toEqual(['seg_1']);
+  });
+
+  it('treats total failure as non-partial (all empty)', () => {
+    const result = validateBatchResponseDetailed(mockInput.segments, [
+      { id: 'seg_0', translatedText: '' },
+      { id: 'seg_1', translatedText: '' },
+      { id: 'seg_2', translatedText: '' },
+    ]);
+
+    expect(result.valid).toBe(false);
+    expect(result.isPartialFailure).toBe(false);
+    expect(result.validSegments).toHaveLength(0);
+    expect(result.invalidIds).toEqual(['seg_0', 'seg_1', 'seg_2']);
+  });
+
+  it('treats duplicate IDs as total failure, not partial', () => {
+    const result = validateBatchResponseDetailed(mockInput.segments, [
+      { id: 'seg_0', translatedText: 'a' },
+      { id: 'seg_0', translatedText: 'b' },
+      { id: 'seg_1', translatedText: 'c' },
+    ]);
+
+    expect(result.valid).toBe(false);
+    expect(result.isPartialFailure).toBe(false);
+    expect(result.validSegments).toHaveLength(0);
+  });
+
+  it('treats extra IDs as total failure, not partial', () => {
+    const result = validateBatchResponseDetailed(mockInput.segments, [
+      { id: 'seg_0', translatedText: 'a' },
+      { id: 'seg_1', translatedText: 'b' },
+      { id: 'seg_2', translatedText: 'c' },
+      { id: 'seg_99', translatedText: 'extra' },
+    ]);
+
+    expect(result.valid).toBe(false);
+    expect(result.isPartialFailure).toBe(false);
+    expect(result.validSegments).toHaveLength(0);
   });
 });
 
@@ -226,13 +236,13 @@ describe('prepareTranslation', () => {
     vi.restoreAllMocks();
   });
 
-  it('returns a valid TranslatedArtifact on success', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      mockApiResponse([
-        { id: 'seg_0_0_5000', translatedText: '你好世界' },
-        { id: 'seg_1_5000_10000', translatedText: '你好吗？' },
-        { id: 'seg_2_10000_15000', translatedText: '这是测试。' },
-      ]) as Response
+  it('returns a valid TranslatedArtifact using AI SDK batch processing', async () => {
+    vi.mocked(generateObject).mockResolvedValue(
+      mockGenerateObjectResult([
+        { id: 'seg_0', translatedText: '你好世界' },
+        { id: 'seg_1', translatedText: '你好吗？' },
+        { id: 'seg_2', translatedText: '这是测试。' },
+      ]) as any
     );
 
     const artifact = await prepareTranslation(
@@ -253,28 +263,279 @@ describe('prepareTranslation', () => {
     expect(artifact.preparedAt).toBeGreaterThan(0);
   });
 
-  it('throws on validation failure', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      mockApiResponse([
-        { id: 'seg_0_0_5000', translatedText: 'hello' },
-        // Missing seg_1 and seg_2
-      ]) as Response
+  it('processes segments in batches of 100', async () => {
+    const largeInput: CleanedTranslationInput = {
+      targetLanguage: 'zh-CN',
+      segments: Array.from({ length: 150 }, (_, index) => ({
+        id: `seg_${index}`,
+        startMs: index * 1000,
+        endMs: index * 1000 + 900,
+        sourceText: `Line ${index}`,
+      })),
+    };
+
+    
+    let callCount = 0;
+    vi.mocked(generateObject).mockImplementation(async (options: any) => {
+      callCount++;
+      const userMsg = options.messages.find((m: any) => m.role === 'user');
+      const content = userMsg?.content as string;
+      // Extract IDs from [TRANSLATE] section only
+      const lines = content.split('\n');
+      const ids: string[] = [];
+      let inTranslate = false;
+      for (const line of lines) {
+        if (line.startsWith('[TRANSLATE]')) {
+          inTranslate = true;
+          continue;
+        }
+        if (line.startsWith('[CONTEXT]')) {
+          inTranslate = false;
+          continue;
+        }
+        if (inTranslate) {
+          const match = line.match(/^\[(?<id>[^\]]+)\]/);
+          if (match?.groups?.id) ids.push(match.groups.id);
+        }
+      }
+      return mockGenerateObjectResult(
+        ids.map((id) => ({ id, translatedText: `translated ${id}` }))
+      ) as any;
+    });
+
+    const artifact = await prepareTranslation(
+      largeInput,
+      { apiKey: 'test-key' },
+      '12345',
+      'en',
+      'abc123hash',
+      'deepseek'
     );
+
+    // 150 segments / 100 per batch = 2 batches
+    expect(callCount).toBe(2);
+    expect(artifact.segments).toHaveLength(150);
+    expect(artifact.segments[0].translatedText).toBe('translated seg_0');
+    expect(artifact.segments[149].translatedText).toBe('translated seg_149');
+  });
+
+  it('validates each batch independently', async () => {
+    const largeInput: CleanedTranslationInput = {
+      targetLanguage: 'zh-CN',
+      segments: Array.from({ length: 150 }, (_, index) => ({
+        id: `seg_${index}`,
+        startMs: index * 1000,
+        endMs: index * 1000 + 900,
+        sourceText: `Line ${index}`,
+      })),
+    };
+
+    
+    let callCount = 0;
+    vi.mocked(generateObject).mockImplementation(async (options: any) => {
+      callCount++;
+      const userMsg = options.messages.find((m: any) => m.role === 'user');
+      const content = userMsg?.content as string;
+      const lines = content.split('\n');
+      const ids: string[] = [];
+      let inTranslate = false;
+      for (const line of lines) {
+        if (line.startsWith('[TRANSLATE]')) {
+          inTranslate = true;
+          continue;
+        }
+        if (line.startsWith('[CONTEXT]')) {
+          inTranslate = false;
+          continue;
+        }
+        if (inTranslate) {
+          const match = line.match(/^\[(?<id>[^\]]+)\]/);
+          if (match?.groups?.id) ids.push(match.groups.id);
+        }
+      }
+      // Second batch returns TOTAL failure (all empty) — should not retry
+      if (callCount === 2) {
+        return mockGenerateObjectResult(
+          ids.map((id) => ({ id, translatedText: '' }))
+        ) as any;
+      }
+      return mockGenerateObjectResult(
+        ids.map((id) => ({ id, translatedText: `translated ${id}` }))
+      ) as any;
+    });
 
     await expect(
       prepareTranslation(
-        mockInput,
+        largeInput,
         { apiKey: 'test-key' },
         '12345',
         'en',
-        'abc123',
-        'openai'
+        'abc123hash',
+        'deepseek'
       )
-    ).rejects.toThrow('Translation validation failed');
+    ).rejects.toThrow('validation failed');
+
+    // First batch succeeded, second failed (no retry for total failure)
+    expect(callCount).toBe(2);
   });
 
-  it('throws on API failure', async () => {
-    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Network error'));
+  it('calls onBatchComplete after each successful batch', async () => {
+    const largeInput: CleanedTranslationInput = {
+      targetLanguage: 'zh-CN',
+      segments: Array.from({ length: 150 }, (_, index) => ({
+        id: `seg_${index}`,
+        startMs: index * 1000,
+        endMs: index * 1000 + 900,
+        sourceText: `Line ${index}`,
+      })),
+    };
+
+    
+    vi.mocked(generateObject).mockImplementation(async (options: any) => {
+      const userMsg = options.messages.find((m: any) => m.role === 'user');
+      const content = userMsg?.content as string;
+      const lines = content.split('\n');
+      const ids: string[] = [];
+      let inTranslate = false;
+      for (const line of lines) {
+        if (line.startsWith('[TRANSLATE]')) {
+          inTranslate = true;
+          continue;
+        }
+        if (line.startsWith('[CONTEXT]')) {
+          inTranslate = false;
+          continue;
+        }
+        if (inTranslate) {
+          const match = line.match(/^\[(?<id>[^\]]+)\]/);
+          if (match?.groups?.id) ids.push(match.groups.id);
+        }
+      }
+      return mockGenerateObjectResult(
+        ids.map((id) => ({ id, translatedText: `translated ${id}` }))
+      ) as any;
+    });
+
+    const batchCompletions: Array<{ segments: number; progress: unknown }> = [];
+    const artifact = await prepareTranslation(
+      largeInput,
+      { apiKey: 'test-key' },
+      '12345',
+      'en',
+      'abc123hash',
+      'deepseek',
+      undefined,
+      (segments, progress) => {
+        batchCompletions.push({ segments: segments.length, progress });
+      }
+    );
+
+    // 150 segments / 100 per batch = 2 batches
+    expect(batchCompletions).toHaveLength(2);
+    expect(batchCompletions[0].segments).toBe(100);
+    expect(batchCompletions[1].segments).toBe(50);
+    expect(artifact.segments).toHaveLength(150);
+  });
+
+  it('emits debug events for each batch', async () => {
+    
+    vi.mocked(generateObject).mockResolvedValue(
+      mockGenerateObjectResult([
+        { id: 'seg_0', translatedText: '你好世界' },
+        { id: 'seg_1', translatedText: '你好吗？' },
+        { id: 'seg_2', translatedText: '这是测试。' },
+      ]) as any
+    );
+
+    const debugRecords: unknown[] = [];
+    await prepareTranslation(
+      mockInput,
+      { apiKey: 'test-key' },
+      '12345',
+      'en',
+      'abc123hash',
+      'deepseek',
+      (debug) => {
+        debugRecords.push(debug);
+      }
+    );
+
+    expect(debugRecords).toHaveLength(2); // started + completed
+    expect(debugRecords[0]).toMatchObject({
+      strategy: 'batch',
+      requestPhase: 'started',
+    });
+    expect(debugRecords[1]).toMatchObject({
+      strategy: 'batch',
+      requestPhase: 'completed',
+      validatedCount: 3,
+    });
+  });
+
+  it('preserves partial segments on batch failure', async () => {
+    const largeInput: CleanedTranslationInput = {
+      targetLanguage: 'zh-CN',
+      segments: Array.from({ length: 150 }, (_, index) => ({
+        id: `seg_${index}`,
+        startMs: index * 1000,
+        endMs: index * 1000 + 900,
+        sourceText: `Line ${index}`,
+      })),
+    };
+
+    
+    let callCount = 0;
+    vi.mocked(generateObject).mockImplementation(async (options: any) => {
+      callCount++;
+      const userMsg = options.messages.find((m: any) => m.role === 'user');
+      const content = userMsg?.content as string;
+      const lines = content.split('\n');
+      const ids: string[] = [];
+      let inTranslate = false;
+      for (const line of lines) {
+        if (line.startsWith('[TRANSLATE]')) {
+          inTranslate = true;
+          continue;
+        }
+        if (line.startsWith('[CONTEXT]')) {
+          inTranslate = false;
+          continue;
+        }
+        if (inTranslate) {
+          const match = line.match(/^\[(?<id>[^\]]+)\]/);
+          if (match?.groups?.id) ids.push(match.groups.id);
+        }
+      }
+      // Second batch fails
+      if (callCount === 2) {
+        throw new Error('Provider error');
+      }
+      return mockGenerateObjectResult(
+        ids.map((id) => ({ id, translatedText: `translated ${id}` }))
+      ) as any;
+    });
+
+    try {
+      await prepareTranslation(
+        largeInput,
+        { apiKey: 'test-key' },
+        '12345',
+        'en',
+        'abc123hash',
+        'deepseek'
+      );
+      expect.fail('Should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toContain('Batch 2/2 failed');
+      // Partial segments from first batch should be preserved (100 segments)
+      expect((err as Error & { partialSegments: unknown[] }).partialSegments).toHaveLength(100);
+    }
+  });
+
+  it('throws on provider failure', async () => {
+    
+    vi.mocked(generateObject).mockRejectedValue(new Error('Network error'));
 
     await expect(
       prepareTranslation(
@@ -288,12 +549,208 @@ describe('prepareTranslation', () => {
     ).rejects.toThrow('Network error');
   });
 
-  it('throws on HTTP error status', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-      ok: false,
-      status: 429,
-      text: () => Promise.resolve('Rate limited'),
-    } as Response);
+  it('uses custom style profile when provided', async () => {
+    
+    vi.mocked(generateObject).mockResolvedValue(
+      mockGenerateObjectResult([
+        { id: 'seg_0', translatedText: '你好世界' },
+        { id: 'seg_1', translatedText: '你好吗？' },
+        { id: 'seg_2', translatedText: '这是测试。' },
+      ]) as any
+    );
+
+    await prepareTranslation(
+      mockInput,
+      { apiKey: 'test-key' },
+      '12345',
+      'en',
+      'abc123hash',
+      'deepseek',
+      undefined,
+      undefined,
+      {
+        styleProfile: {
+          targetLanguageName: 'Simplified Chinese',
+          tone: 'Use casual tone.',
+          namingConsistency: 'Keep names consistent.',
+          brevity: 'Keep it short.',
+          glossary: [{ term: 'Netflix', translation: '网飞' }],
+        },
+      }
+    );
+
+    
+    const callArgs = vi.mocked(generateObject).mock.calls[0][0] as any;
+    const systemPrompt = callArgs.messages[0].content as string;
+    expect(systemPrompt).toContain('Use casual tone.');
+    expect(systemPrompt).toContain('网飞');
+  });
+
+  it('uses custom context policy when provided', async () => {
+    const largeInput: CleanedTranslationInput = {
+      targetLanguage: 'zh-CN',
+      segments: Array.from({ length: 150 }, (_, index) => ({
+        id: `seg_${index}`,
+        startMs: index * 1000,
+        endMs: index * 1000 + 900,
+        sourceText: `Line ${index}`,
+      })),
+    };
+
+    
+    vi.mocked(generateObject).mockImplementation(async (options: any) => {
+      const userMsg = options.messages.find((m: any) => m.role === 'user');
+      const content = userMsg?.content as string;
+      const lines = content.split('\n');
+      const ids: string[] = [];
+      let inTranslate = false;
+      for (const line of lines) {
+        if (line.startsWith('[TRANSLATE]')) {
+          inTranslate = true;
+          continue;
+        }
+        if (line.startsWith('[CONTEXT]')) {
+          inTranslate = false;
+          continue;
+        }
+        if (inTranslate) {
+          const match = line.match(/^\[(?<id>[^\]]+)\]/);
+          if (match?.groups?.id) ids.push(match.groups.id);
+        }
+      }
+      return mockGenerateObjectResult(
+        ids.map((id) => ({ id, translatedText: `translated ${id}` }))
+      ) as any;
+    });
+
+    await prepareTranslation(
+      largeInput,
+      { apiKey: 'test-key' },
+      '12345',
+      'en',
+      'abc123hash',
+      'deepseek',
+      undefined,
+      undefined,
+      {
+        contextPolicy: {
+          contextBeforeCount: 5,
+          contextAfterCount: 2,
+        },
+      }
+    );
+
+    // Second batch should have 5 context segments before (not default 3)
+    const secondCallArgs = vi.mocked(generateObject).mock.calls[1][0] as any;
+    const secondPrompt = secondCallArgs.messages[1].content as string;
+    // Count context lines before [TRANSLATE]
+    const contextLines = secondPrompt.split('\n').filter((l: string) => l.startsWith('[CONTEXT]'));
+    expect(contextLines.length).toBeGreaterThan(0);
+  });
+
+  it('emits streaming progress events', async () => {
+    
+    vi.mocked(generateObject).mockResolvedValue(
+      mockGenerateObjectResult([
+        { id: 'seg_0', translatedText: '你好世界' },
+        { id: 'seg_1', translatedText: '你好吗？' },
+        { id: 'seg_2', translatedText: '这是测试。' },
+      ]) as any
+    );
+
+    const streamEvents: Array<{ type: string; batchNumber: number }> = [];
+    await prepareTranslation(
+      mockInput,
+      { apiKey: 'test-key' },
+      '12345',
+      'en',
+      'abc123hash',
+      'deepseek',
+      undefined,
+      undefined,
+      {
+        onStreamProgress: (event) => {
+          streamEvents.push({ type: event.type, batchNumber: event.batchNumber });
+        },
+      }
+    );
+
+    expect(streamEvents).toHaveLength(2);
+    expect(streamEvents[0].type).toBe('batch-start');
+    expect(streamEvents[1].type).toBe('batch-complete');
+  });
+
+  it('smart retries partial batch failures with context', async () => {
+    let callCount = 0;
+    vi.mocked(generateObject).mockImplementation(async (options: any) => {
+      callCount++;
+      const userMsg = options.messages.find((m: any) => m.role === 'user');
+      const content = userMsg?.content as string;
+      const lines = content.split('\n');
+      const ids: string[] = [];
+      let inTranslate = false;
+      for (const line of lines) {
+        if (line.startsWith('[TRANSLATE]')) {
+          inTranslate = true;
+          continue;
+        }
+        if (line.startsWith('[CONTEXT]')) {
+          inTranslate = false;
+          continue;
+        }
+        if (inTranslate) {
+          const match = line.match(/^\[(?<id>[^\]]+)\]/);
+          if (match?.groups?.id) ids.push(match.groups.id);
+        }
+      }
+
+      // First call: partial failure (seg_1 empty)
+      if (callCount === 1) {
+        return mockGenerateObjectResult([
+          { id: 'seg_0', translatedText: 'translated seg_0' },
+          { id: 'seg_1', translatedText: '' },
+          { id: 'seg_2', translatedText: 'translated seg_2' },
+        ]) as any;
+      }
+
+      // Retry call: return the missing segment
+      return mockGenerateObjectResult(
+        ids.map((id) => ({ id, translatedText: `translated ${id}` }))
+      ) as any;
+    });
+
+    const artifact = await prepareTranslation(
+      mockInput,
+      { apiKey: 'test-key' },
+      '12345',
+      'en',
+      'abc123hash',
+      'deepseek'
+    );
+
+    // Should have made 2 calls: original batch + retry
+    expect(callCount).toBe(2);
+    expect(artifact.segments).toHaveLength(3);
+    expect(artifact.segments[1].translatedText).toBe('translated seg_1');
+  });
+
+  it('fails on retry when partial retry also fails', async () => {
+    let callCount = 0;
+    vi.mocked(generateObject).mockImplementation(async () => {
+      callCount++;
+      // First call: partial failure (seg_1 empty)
+      if (callCount === 1) {
+        return mockGenerateObjectResult([
+          { id: 'seg_0', translatedText: 'translated seg_0' },
+          { id: 'seg_1', translatedText: '' },
+          { id: 'seg_2', translatedText: 'translated seg_2' },
+        ]) as any;
+      }
+      // Retry call: still missing seg_1
+      return mockGenerateObjectResult([
+        { id: 'seg_1', translatedText: '' },
+      ]) as any;
+    });
 
     await expect(
       prepareTranslation(
@@ -301,9 +758,38 @@ describe('prepareTranslation', () => {
         { apiKey: 'test-key' },
         '12345',
         'en',
-        'abc123',
-        'openai'
+        'abc123hash',
+        'deepseek'
       )
-    ).rejects.toThrow('Translation API error (429)');
+    ).rejects.toThrow('failed after retry');
+
+    expect(callCount).toBe(2);
+  });
+
+  it('does not retry total batch failures', async () => {
+    let callCount = 0;
+    vi.mocked(generateObject).mockImplementation(async () => {
+      callCount++;
+      // All segments empty — total failure
+      return mockGenerateObjectResult([
+        { id: 'seg_0', translatedText: '' },
+        { id: 'seg_1', translatedText: '' },
+        { id: 'seg_2', translatedText: '' },
+      ]) as any;
+    });
+
+    await expect(
+      prepareTranslation(
+        mockInput,
+        { apiKey: 'test-key' },
+        '12345',
+        'en',
+        'abc123hash',
+        'deepseek'
+      )
+    ).rejects.toThrow('validation failed');
+
+    // Should only make 1 call — no retry for total failure
+    expect(callCount).toBe(1);
   });
 });

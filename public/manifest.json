@@ -40,6 +40,19 @@
     "default_title": "Netflix Translator"
   },
   "options_page": "options.html",
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "page-world-observer.js",
+        "library.html",
+        "library.js",
+        "library.css"
+      ],
+      "matches": [
+        "*://*.netflix.com/*"
+      ]
+    }
+  ],
   "icons": {
     "16": "icons/icon-16.png",
     "48": "icons/icon-48.png",

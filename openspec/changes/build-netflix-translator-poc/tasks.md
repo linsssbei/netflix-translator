@@ -47,19 +47,66 @@
 - [x] 6.5 Record preparation success or failure in the subtitle library without disrupting Netflix playback
 - [x] 6.6 Add tests for Chinese subtitle preparation, batch translation, response validation, and provider failure handling
 
+## 6A. Translator Workflow Rewrite
+
+- [x] 6A.1 Remove the default one-shot full-subtitle request path from subtitle preparation
+- [x] 6A.2 Change provider requests to fixed batches of no more than 20 output segments
+- [x] 6A.3 Update prompts to require strict JSON output for only the requested output batch
+- [x] 6A.4 Optionally include adjacent source subtitles as read-only context without requesting translations for context rows
+- [x] 6A.5 Validate each batch independently for exact IDs, no duplicates, no extras, non-empty text, and preserved source timing
+- [x] 6A.6 Append each validated batch to the stored translated artifact before sending the next provider request
+- [x] 6A.7 Track progress metadata for current batch, total batches, validated segment count, total segment count, provider model, and latest error/debug summary
+- [x] 6A.8 Mark the artifact `translation-ready` only after all batches have validated
+- [x] 6A.9 Preserve partial artifacts for diagnostics when preparation fails, but do not expose partial artifacts as ready for rendering
+- [x] 6A.10 Add tests for incremental append behavior, strict response validation, partial failure state, progress metadata, and full completion
+
+## 6B. AI SDK Translation Provider Layer
+
+- [x] 6B.1 Add AI SDK dependencies and provider package support for DeepSeek and OpenAI-compatible endpoints
+- [x] 6B.2 Replace hand-built chat-completion fetch logic with an AI SDK provider adapter behind the existing translator-agent interface
+- [x] 6B.3 Define a schema-backed batch translation output contract and route provider output through AI SDK structured-output parsing
+- [x] 6B.4 Keep domain validation for exact segment IDs, duplicate IDs, extra IDs, non-empty text, and preserved timing after AI SDK schema validation
+- [x] 6B.5 Add a reusable translation style profile for target language, tone, naming consistency, subtitle brevity, and glossary rules
+- [x] 6B.6 Add a bounded translation context policy for adjacent source segments and capped prior validated translation context
+- [x] 6B.7 Expose streaming progress/debug events from the AI SDK provider path without marking partial streamed output as ready subtitles
+- [x] 6B.8 Ensure provider calls run from the service worker or Chrome-free test harness, not directly from the Netflix content script
+- [x] 6B.9 Add tests for provider adapter configuration, structured-output failures, streaming progress, style profile prompt construction, and context policy limits
+
+## 6C. Chrome-Free Translator Integration Testing
+
+- [x] 6C.1 Add a fake raw subtitle fixture that exercises multiline text, repeated names, timing gaps, and enough segments to require multiple batches
+- [x] 6C.2 Extract the translator preparation pipeline so it can run with injected provider and storage adapters outside Chrome
+- [x] 6C.3 Add an in-memory storage adapter for translator integration tests
+- [x] 6C.4 Add deterministic integration tests using AI SDK mock providers or equivalent local provider doubles
+- [x] 6C.5 Validate fixture parsing, cleaned input generation, batch requests, schema validation, incremental persistence, and final artifact readiness in the Chrome-free path
+- [x] 6C.6 Add an opt-in live provider test path controlled by environment variables for API key, endpoint/provider, model, and target language
+- [x] 6C.7 Add npm scripts or documented commands for running deterministic translator integration tests and optional live provider tests
+
+## 6D. Subtitle Library Management UI
+
+- [x] 6D.1 Extend subtitle library metadata to include optional video title, source format, acquisition method, source segment count, translated segment count, provider model, and validation summary
+- [x] 6D.2 Add storage operations to list all local subtitle library entries sorted by updated time
+- [x] 6D.3 Add storage operations to load raw source subtitle details, parsed source segments, translated segments, timestamps, progress metadata, and latest debug/error details for one entry
+- [x] 6D.4 Add storage operations to delete one local library entry and all local entries for a video
+- [x] 6D.5 Build a simple management page or options-page tab with filters for status, source language, target language, and video search
+- [x] 6D.6 Build a detail view that compares source text and translated text by timestamp and segment ID
+- [x] 6D.7 Show deterministic quality diagnostics such as translated segment count, missing segment count, empty translation count, stale status, latest error, and provider/model metadata
+- [x] 6D.8 Add delete confirmation UI and refresh the management list after deletion
+- [x] 6D.9 Add tests for library listing, detail loading, deletion, empty state, and diagnostic rendering
+
 ## 7. Playback Rendering From Saved Translation
 
-- [ ] 7.1 Implement an extension-owned subtitle overlay mounted to the Netflix playback area
-- [ ] 7.2 Load a ready translated subtitle artifact for the active video before enabling translated rendering
-- [ ] 7.3 Synchronize overlay text with video current time, pause/resume state, and seeking
-- [ ] 7.4 Avoid duplicate subtitle display by hiding or bypassing source-language subtitles when translated subtitles are active where possible
-- [ ] 7.5 Handle missing translated segments by clearing or skipping text without interrupting playback
-- [ ] 7.6 Add tests for artifact loading, timing lookup, seeking behavior, missing segments, and overlay lifecycle
+- [x] 7.1 Implement an extension-owned subtitle overlay mounted to the Netflix playback area
+- [x] 7.2 Load a ready translated subtitle artifact for the active video before enabling translated rendering
+- [x] 7.3 Synchronize overlay text with video current time, pause/resume state, and seeking
+- [x] 7.4 Avoid duplicate subtitle display by hiding or bypassing source-language subtitles when translated subtitles are active where possible
+- [x] 7.5 Handle missing translated segments by clearing or skipping text without interrupting playback
+- [x] 7.6 Add tests for artifact loading, timing lookup, seeking behavior, missing segments, and overlay lifecycle
 
 ## 8. Minimal User Workflow
 
-- [ ] 8.1 Build minimal controls for selected target language, prepare subtitles, and enable/disable translated subtitles
-- [ ] 8.2 Show status states for unsupported page, video detected, subtitle acquisition blocked, source ready, preparing translation, translation ready, translation failed, stale translation, and rendering active
-- [ ] 8.3 Wire the happy path: detect video ID, acquire source subtitle, parse, translate once, save artifact, reload from storage, and render during playback
-- [ ] 8.4 Manually verify the full POC on one Netflix title with original-language subtitles
-- [ ] 8.5 Document local development, extension loading, provider setup, acquisition findings, and known POC limitations
+- [x] 8.1 Build minimal controls for selected target language, prepare subtitles, and enable/disable translated subtitles
+- [x] 8.2 Show status states for unsupported page, video detected, subtitle acquisition blocked, source ready, preparing translation, translation ready, translation failed, stale translation, and rendering active
+- [x] 8.3 Wire the happy path: detect video ID, acquire source subtitle, parse, translate once, save artifact, reload from storage, and render during playback
+- [x] 8.4 Manually verify the full POC on one Netflix title with original-language subtitles
+- [x] 8.5 Document local development, extension loading, provider setup, acquisition findings, and known POC limitations

@@ -6,14 +6,21 @@ import type { NormalizedSegment, CleanedTranslationInput } from './types';
  * - hh:mm:ss.mmm (e.g., "0:00:00.000" or "00:00:00.000")
  * - hh:mm:ss:ff (frames, e.g., "00:00:00:00")
  * - mmmms (seconds with suffix, e.g., "5.5s")
- * - mmmms (integer seconds without suffix: "5000" -> 5000ms)
+ * - raw milliseconds as integer (e.g., "5000" -> 5000ms)
+ * - ticks with explicit tick rate (e.g., "465882084t")
  */
-export function parseTtmlTime(timeExpr: string): number {
+export function parseTtmlTime(timeExpr: string, tickRate?: number): number {
   const trimmed = timeExpr.trim();
 
   // Seconds with 's' suffix (e.g., "5.5s", "10s")
   if (/^\d+\.?\d*s$/i.test(trimmed)) {
     return Math.round(parseFloat(trimmed.replace(/s$/i, '')) * 1000);
+  }
+
+  // Ticks with 't' suffix. TTML tick values require a document tickRate.
+  if (/^\d+\.?\d*t$/i.test(trimmed)) {
+    if (!tickRate || tickRate <= 0) return 0;
+    return Math.round((parseFloat(trimmed.replace(/t$/i, '')) / tickRate) * 1000);
   }
 
   // Pure milliseconds as integer
@@ -45,13 +52,15 @@ export function parseTtmlTime(timeExpr: string): number {
     return ((hours * 60 + minutes) * 60 + seconds) * 1000 + ms;
   }
 
-  // Try parsing as float seconds
-  const floatSeconds = parseFloat(trimmed);
-  if (!isNaN(floatSeconds) && floatSeconds > 0) {
-    return Math.round(floatSeconds * 1000);
-  }
-
   return 0;
+}
+
+function extractTtmlTickRate(payload: string): number | undefined {
+  const match = payload.match(/\b(?:ttp:)?tickRate\s*=\s*["'](\d+(?:\.\d+)?)["']/i);
+  if (!match) return undefined;
+
+  const tickRate = parseFloat(match[1]);
+  return Number.isFinite(tickRate) && tickRate > 0 ? tickRate : undefined;
 }
 
 /**
@@ -92,7 +101,8 @@ function extractParagraphText(pElement: Element): string {
  * Parse TTML using regex (no DOM APIs) — works in service workers.
  * Extracts <p> elements with begin/end/dur attributes and text content.
  */
-function parseTtmlWithRegex(payload: string): NormalizedSegment[] {
+export function parseTtmlWithRegex(payload: string): NormalizedSegment[] {
+  const tickRate = extractTtmlTickRate(payload);
   // Match <p> elements with timing attributes
   // Handles: <p begin="..." end="...">text</p> and <p begin="..." dur="...">text<span>more</span></p>
   const pRegex = /<p\b[^>]*\bbegin\s*=\s*["']([^"']*)["'][^>]*>([\s\S]*?)<\/p>/gi;
@@ -109,13 +119,13 @@ function parseTtmlWithRegex(payload: string): NormalizedSegment[] {
     const endMatch = fullTag.match(/\bend\s*=\s*["']([^"']*)["']/i);
     const durMatch = fullTag.match(/\bdur\s*=\s*["']([^"']*)["']/i);
 
-    const startMs = parseTtmlTime(beginAttr);
+    const startMs = parseTtmlTime(beginAttr, tickRate);
     let endMs: number;
 
     if (endMatch) {
-      endMs = parseTtmlTime(endMatch[1]);
+      endMs = parseTtmlTime(endMatch[1], tickRate);
     } else if (durMatch) {
-      endMs = startMs + parseTtmlTime(durMatch[1]);
+      endMs = startMs + parseTtmlTime(durMatch[1], tickRate);
     } else {
       continue; // No end or duration
     }
@@ -139,7 +149,7 @@ function parseTtmlWithRegex(payload: string): NormalizedSegment[] {
     if (!normalized) continue;
 
     segments.push({
-      id: `seg_${segIndex}_${startMs}_${endMs}`,
+      id: `seg_${segIndex}`,
       startMs,
       endMs,
       sourceText: normalized,
@@ -184,6 +194,11 @@ export function parseTtml(payload: string): NormalizedSegment[] {
     }
 
     const segments: NormalizedSegment[] = [];
+    const tickRateAttr =
+      doc.documentElement.getAttribute('ttp:tickRate') ||
+      doc.documentElement.getAttribute('tickRate');
+    const parsedTickRate = tickRateAttr ? parseFloat(tickRateAttr) : NaN;
+    const validTickRate = Number.isFinite(parsedTickRate) && parsedTickRate > 0 ? parsedTickRate : undefined;
     let segIndex = 0;
 
     paragraphs.forEach((p) => {
@@ -193,13 +208,13 @@ export function parseTtml(payload: string): NormalizedSegment[] {
 
       if (!beginAttr) return;
 
-      const startMs = parseTtmlTime(beginAttr);
+      const startMs = parseTtmlTime(beginAttr, validTickRate);
       let endMs: number;
 
       if (endAttr) {
-        endMs = parseTtmlTime(endAttr);
+        endMs = parseTtmlTime(endAttr, validTickRate);
       } else if (durAttr) {
-        endMs = startMs + parseTtmlTime(durAttr);
+        endMs = startMs + parseTtmlTime(durAttr, validTickRate);
       } else {
         return;
       }
@@ -207,7 +222,7 @@ export function parseTtml(payload: string): NormalizedSegment[] {
       const sourceText = extractParagraphText(p);
       if (!sourceText) return;
 
-      const id = `seg_${segIndex}_${startMs}_${endMs}`;
+      const id = `seg_${segIndex}`;
       segIndex++;
 
       segments.push({ id, startMs, endMs, sourceText });

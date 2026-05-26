@@ -5,11 +5,7 @@ import {
   createSubtitleResource,
 } from '../shared/subtitle-acquisition';
 import { parseTtml } from '../shared/subtitle-parser';
-import {
-  saveSourceSubtitle,
-  detectStaleTranslations,
-  getEntriesForVideo,
-} from '../shared/subtitle-library';
+
 import { DebugOverlay } from './debug-overlay';
 
 function formatMs(ms: number): string {
@@ -189,43 +185,17 @@ export class NetflixAdapter {
       }
     }
 
-    // Save to subtitle library (Task 5.3)
-    try {
-      const targetLang = await this.getTargetLanguage();
-      await saveSourceSubtitle(resource, targetLang, candidate.payload);
-
-      // Detect stale translations for this video (Task 5.6)
-      if (resource.contentHash) {
-        const stale = await detectStaleTranslations(
-          resource.videoId,
-          resource.sourceLanguage,
-          targetLang,
-          resource.contentHash
-        );
-        if (stale.length > 0) {
-          this.overlay.addError(`${stale.length} stale translation(s) detected`);
-        }
-      }
-
-      // Update overlay with library state
-      const entries = await getEntriesForVideo(resource.videoId);
-      const ready = entries.filter((e) => e.status === 'translation-ready').length;
-      this.overlay.setLibraryStatus(
-        `${entries.length} saved (${ready} ready, ${entries.length - ready} pending)`
-      );
-
-      this.overlay.setStatus(
-        `Subtitle acquired & saved (${resource.format}, ${targetLang})`
-      );
-    } catch (saveErr) {
-      console.warn('[Netflix Translator] Library save error:', saveErr);
-    }
-
-    // Forward to service worker
+    // Forward to service worker as a pending subtitle (do NOT save to library yet)
     chrome.runtime
       .sendMessage({
         type: 'SUBTITLE_CANDIDATE',
         resource,
+        payload: candidate.payload,
+      })
+      .then(() => {
+        this.overlay.setStatus(
+          `Subtitle detected (${resource.format}). Open popup and click Prepare to save.`
+        );
       })
       .catch((err) => {
         this.overlay.addError('Failed to forward resource: ' + (err as Error).message);
@@ -301,18 +271,6 @@ export class NetflixAdapter {
       .catch((err) => {
         this.overlay.addError('Failed to report left: ' + (err as Error).message);
       });
-  }
-
-  /**
-   * Get the currently selected target language from extension settings
-   */
-  private async getTargetLanguage(): Promise<string> {
-    try {
-      const result = await chrome.storage.local.get('targetLanguage');
-      return (result.targetLanguage as string) || 'zh-CN';
-    } catch {
-      return 'zh-CN';
-    }
   }
 
   /**
