@@ -21,6 +21,31 @@
       </select>
       <button id="prepare-btn">Prepare Subtitles</button>
       <button id="toggle-btn" class="hidden">Enable Translation</button>
+      <div id="appearance" class="hidden">
+        <label for="font-size">Font Size:</label>
+        <select id="font-size">
+          <option value="12">12px</option>
+          <option value="14">14px</option>
+          <option value="16">16px</option>
+          <option value="18">18px</option>
+          <option value="20">20px</option>
+          <option value="24" selected>24px</option>
+          <option value="28">28px</option>
+          <option value="32">32px</option>
+          <option value="36">36px</option>
+          <option value="40">40px</option>
+          <option value="44">44px</option>
+          <option value="48">48px</option>
+        </select>
+        <label for="placement">Placement:</label>
+        <select id="placement">
+          <option value="bottom" selected>Bottom</option>
+          <option value="top">Top</option>
+        </select>
+        <div id="subtitle-preview-container">
+          <div id="subtitle-preview-text">Sample subtitle text for preview</div>
+        </div>
+      </div>
     </div>
     <!-- Diagnostics Panel -->
     <div id="diagnostics" class="hidden">

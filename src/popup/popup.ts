@@ -1,9 +1,118 @@
+import { SubtitleAppearanceConfig } from '../shared/types';
+import { loadAppearanceConfig, saveAppearanceConfig } from '../shared/appearance-config';
+import { percentToPixels, pixelsToPercent, SUBTITLE_FONT_FAMILY, SUBTITLE_LINE_HEIGHT } from '../shared/subtitle-fit';
+
+export const PREVIEW_SAMPLE_TEXT = 'Sample subtitle text for preview';
+export const PREVIEW_MIN_HEIGHT_PX = 80;
+export const PREVIEW_MAX_HEIGHT_PX = 200;
+
+export function computePreviewStyle(
+  config: SubtitleAppearanceConfig,
+  containerWidthPx: number,
+): {
+  fontSize: number;
+  maxWidthPx: number;
+  heightPx: number;
+  placement: 'top' | 'bottom';
+} {
+  const maxWidthPx = percentToPixels(config.areaWidthPct, containerWidthPx);
+  const heightPx = percentToPixels(config.areaHeightPct, containerWidthPx);
+  return {
+    fontSize: config.fontSize,
+    maxWidthPx,
+    heightPx,
+    placement: config.placement,
+  };
+}
+
+export function clampPreviewHeight(
+  heightPx: number,
+  minHeight: number = PREVIEW_MIN_HEIGHT_PX,
+  maxHeight: number = PREVIEW_MAX_HEIGHT_PX,
+): number {
+  return Math.min(maxHeight, Math.max(minHeight, heightPx));
+}
+
+export function resizeHeightToPercent(
+  heightPx: number,
+  containerWidthPx: number,
+): number {
+  return pixelsToPercent(heightPx, containerWidthPx);
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   const statusEl = document.getElementById('status') as HTMLSpanElement;
   const controlsEl = document.getElementById('controls') as HTMLDivElement;
   const prepareBtn = document.getElementById('prepare-btn') as HTMLButtonElement;
   const toggleBtn = document.getElementById('toggle-btn') as HTMLButtonElement;
   const targetLangSelect = document.getElementById('target-language') as HTMLSelectElement;
+
+  const appearanceEl = document.getElementById('appearance') as HTMLDivElement;
+  const fontSizeSelect = document.getElementById('font-size') as HTMLSelectElement;
+  const placementSelect = document.getElementById('placement') as HTMLSelectElement;
+
+  const previewContainer = document.getElementById('subtitle-preview-container') as HTMLDivElement;
+  const previewText = document.getElementById('subtitle-preview-text') as HTMLDivElement;
+
+  const resizeHandle = document.createElement('div');
+  resizeHandle.className = 'resize-handle';
+  previewContainer.appendChild(resizeHandle);
+
+  let isResizing = false;
+  let resizeStartY = 0;
+  let resizeStartHeight = 0;
+
+  resizeHandle.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    isResizing = true;
+    resizeStartY = e.clientY;
+    resizeStartHeight = previewContainer.offsetHeight;
+  });
+
+  document.addEventListener('mousemove', (e) => {
+    if (!isResizing) return;
+    const delta = e.clientY - resizeStartY;
+    const newHeight = clampPreviewHeight(resizeStartHeight + delta);
+    previewContainer.style.height = `${newHeight}px`;
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (!isResizing) return;
+    isResizing = false;
+    const containerWidth = previewContainer.offsetWidth;
+    if (containerWidth <= 0) return;
+    const newHeightPct = resizeHeightToPercent(previewContainer.offsetHeight, containerWidth);
+    loadAppearanceConfig().then((config) => {
+      config.areaHeightPct = newHeightPct;
+      saveAppearanceConfig(config).then((saved) => {
+        renderPreview(saved);
+      });
+    });
+  });
+
+  function renderPreview(config: SubtitleAppearanceConfig) {
+    const containerWidth = previewContainer.offsetWidth;
+    if (containerWidth <= 0) return;
+
+    const style = computePreviewStyle(config, containerWidth);
+
+    previewText.textContent = PREVIEW_SAMPLE_TEXT;
+    previewText.style.fontFamily = SUBTITLE_FONT_FAMILY;
+    previewText.style.lineHeight = String(SUBTITLE_LINE_HEIGHT);
+    previewText.style.fontSize = `${style.fontSize}px`;
+    previewText.style.maxWidth = `${style.maxWidthPx}px`;
+
+    if (style.placement === 'top') {
+      previewText.style.top = '0';
+      previewText.style.bottom = 'auto';
+    } else {
+      previewText.style.top = 'auto';
+      previewText.style.bottom = '0';
+    }
+
+    const clampedHeight = clampPreviewHeight(style.heightPx);
+    previewContainer.style.height = `${clampedHeight}px`;
+  }
 
   // Diagnostics elements
   const diagnosticsEl = document.getElementById('diagnostics') as HTMLDivElement;
@@ -44,6 +153,13 @@ document.addEventListener('DOMContentLoaded', () => {
       currentVideoId = match[1];
       statusEl.textContent = `Video: ${currentVideoId}`;
       controlsEl.classList.remove('hidden');
+      appearanceEl.classList.remove('hidden');
+
+      loadAppearanceConfig().then((config) => {
+        fontSizeSelect.value = String(config.fontSize);
+        placementSelect.value = config.placement;
+        renderPreview(config);
+      });
 
       // Query detection status (subtitle availability)
       queryDetectionStatus();
@@ -67,6 +183,20 @@ document.addEventListener('DOMContentLoaded', () => {
     if (result.targetLanguage) {
       targetLangSelect.value = result.targetLanguage;
     }
+  });
+
+  fontSizeSelect.addEventListener('change', async () => {
+    const config = await loadAppearanceConfig();
+    config.fontSize = Number(fontSizeSelect.value);
+    const saved = await saveAppearanceConfig(config);
+    renderPreview(saved);
+  });
+
+  placementSelect.addEventListener('change', async () => {
+    const config = await loadAppearanceConfig();
+    config.placement = placementSelect.value as SubtitleAppearanceConfig['placement'];
+    const saved = await saveAppearanceConfig(config);
+    renderPreview(saved);
   });
 
   prepareBtn.addEventListener('click', () => {
