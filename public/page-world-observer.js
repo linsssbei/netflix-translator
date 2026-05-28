@@ -60,6 +60,16 @@
   // File extension hints
   const SUBTITLE_EXTENSIONS = ['.vtt', '.ttml', '.srt', '.xml', '.json', '.dfxp'];
 
+  const METADATA_URL_PATTERNS = [
+    /metadata/i,
+    /pathEvaluator/i,
+    /shakti/i,
+    /cadmium/i,
+    /playapi/i,
+    /graphql/i,
+    /browse/i,
+  ];
+
   /**
    * Check if a URL is a Netflix internal endpoint to ignore
    */
@@ -129,6 +139,115 @@
     return undefined;
   }
 
+  function getCurrentVideoId() {
+    const match = window.location.pathname.match(/^\/watch\/(\d+)/);
+    return match ? match[1] : undefined;
+  }
+
+  function cleanMetadataText(value) {
+    if (typeof value !== 'string') return undefined;
+    const cleaned = value.replace(/\s+/g, ' ').trim();
+    return cleaned || undefined;
+  }
+
+  function readFirstString(record, keys) {
+    for (let i = 0; i < keys.length; i++) {
+      const value = cleanMetadataText(record[keys[i]]);
+      if (value) return value;
+    }
+    return undefined;
+  }
+
+  function extractMetadataFromObject(value, videoId, depth) {
+    if (!value || typeof value !== 'object' || depth > 12) return undefined;
+
+    if (Array.isArray(value)) {
+      for (let i = 0; i < value.length; i++) {
+        const found = extractMetadataFromObject(value[i], videoId, depth + 1);
+        if (found) return found;
+      }
+      return undefined;
+    }
+
+    const record = value;
+    const idValue = record.videoId || record.id || record.movieId || record.titleId || record.summary?.id;
+    const idMatches = String(idValue || '') === String(videoId);
+    const keyedMatch = Object.prototype.hasOwnProperty.call(record, videoId) && typeof record[videoId] === 'object';
+
+    if (keyedMatch) {
+      const nested = extractMetadataFromObject(record[videoId], videoId, depth + 1);
+      if (nested) return nested;
+    }
+
+    if (idMatches) {
+      const title =
+        readFirstString(record, ['title', 'videoTitle', 'titleName', 'name', 'displayName']) ||
+        readFirstString(record.summary || {}, ['title', 'videoTitle', 'titleName', 'name', 'displayName']);
+      const synopsis =
+        readFirstString(record, ['synopsis', 'description', 'shortSynopsis', 'evidence']) ||
+        readFirstString(record.summary || {}, ['synopsis', 'description', 'shortSynopsis', 'evidence']);
+      const maturityRating =
+        readFirstString(record, ['maturityRating', 'rating']) ||
+        readFirstString(record.summary || {}, ['maturityRating', 'rating']);
+      if (title || synopsis) {
+        return { title: title, synopsis: synopsis, maturityRating: maturityRating };
+      }
+    }
+
+    for (const key in record) {
+      if (!Object.prototype.hasOwnProperty.call(record, key)) continue;
+      const found = extractMetadataFromObject(record[key], videoId, depth + 1);
+      if (found) return found;
+    }
+
+    return undefined;
+  }
+
+  function notifyVideoMetadata(metadata) {
+    if (!metadata || !metadata.videoId) return;
+    const event = new CustomEvent('nt-video-metadata', {
+      detail: {
+        videoId: metadata.videoId,
+        title: metadata.title,
+        synopsis: metadata.synopsis,
+        maturityRating: metadata.maturityRating,
+        source: metadata.source || 'metadata-response',
+        confidence: 'high',
+        timestamp: Date.now(),
+      },
+    });
+    window.dispatchEvent(event);
+  }
+
+  function maybeNotifyVideoMetadata(payload, contentType, url) {
+    const videoId = getCurrentVideoId();
+    if (!videoId || !payload || payload.length > 5 * 1024 * 1024) return;
+    const ct = (contentType || '').toLowerCase();
+    const likelyJson = ct.includes('json') || payload.trim().charAt(0) === '{' || payload.trim().charAt(0) === '[';
+    if (!likelyJson) return;
+
+    try {
+      const parsed = JSON.parse(payload);
+      const metadata = extractMetadataFromObject(parsed, videoId, 0);
+      if (metadata) {
+        metadata.videoId = videoId;
+        metadata.source = url;
+        notifyVideoMetadata(metadata);
+      }
+    } catch {
+      // Ignore non-JSON or malformed metadata payloads.
+    }
+  }
+
+  function shouldReadForMetadata(url, contentType) {
+    const ct = (contentType || '').toLowerCase();
+    if (ct.includes('json')) return true;
+    for (let i = 0; i < METADATA_URL_PATTERNS.length; i++) {
+      if (METADATA_URL_PATTERNS[i].test(url)) return true;
+    }
+    return false;
+  }
+
   /**
    * Notify the content script (isolated world) about a discovered subtitle
    */
@@ -172,13 +291,23 @@
     // Make the original request
     const response = await originalFetch.call(window, request);
 
+    // Check if this looks like a subtitle request
+    const contentType = response.headers.get('content-type') || '';
+    if (shouldReadForMetadata(url, contentType)) {
+      try {
+        const metadataResponse = response.clone();
+        const metadataText = await metadataResponse.text();
+        maybeNotifyVideoMetadata(metadataText, contentType, url);
+      } catch (err) {
+        console.debug('[NT Observer] Failed to process metadata response:', err);
+      }
+    }
+
     // Skip Netflix internal APIs even if content type matches
     if (shouldIgnoreUrl(url)) {
       return response;
     }
     
-    // Check if this looks like a subtitle request
-    const contentType = response.headers.get('content-type') || '';
     const isSubtitleUrl = looksLikeSubtitleUrl(url);
     const isSubtitleContent = looksLikeSubtitleContentType(contentType);
 
@@ -226,12 +355,16 @@
       // Listen for load event to capture response
       const onLoad = function () {
         try {
-          // Skip Netflix internal APIs
+          const contentType = xhr.getResponseHeader('content-type') || '';
+          if (xhr.responseText && shouldReadForMetadata(requestUrl, contentType)) {
+            maybeNotifyVideoMetadata(xhr.responseText, contentType, requestUrl);
+          }
+
+          // Skip Netflix internal APIs for subtitle acquisition after metadata processing.
           if (shouldIgnoreUrl(requestUrl)) {
             return;
           }
-          
-          const contentType = xhr.getResponseHeader('content-type') || '';
+
           const isSubtitleUrl = looksLikeSubtitleUrl(requestUrl);
           const isSubtitleContent = looksLikeSubtitleContentType(contentType);
 

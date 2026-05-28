@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { planBatches, validateBatchResponseDetailed } from '../shared/translator-agent';
-import { buildSystemPromptFromProfile, buildDefaultStyleProfile } from '../shared/translation-provider';
+import {
+  buildSystemPromptFromProfile,
+  buildDefaultStyleProfile,
+  buildBatchPrompt,
+  normalizeProviderSegments,
+} from '../shared/translation-provider';
 import type { TranslationContextProfile, CleanedTranslationInput } from '../shared/types';
 import { createEmptyProfile, buildProfileKey } from '../shared/context-profile';
 
@@ -177,6 +182,30 @@ describe('validateBatchResponseDetailed', () => {
 
     expect(result.valid).toBe(false);
     expect(result.reason).toContain('Unexpected segment IDs');
+  });
+});
+
+describe('provider-facing segment IDs', () => {
+  it('uses non-numeric stable request IDs in batch prompts', () => {
+    const prompt = buildBatchPrompt(
+      [{ id: 'seg_400', startMs: 400000, endMs: 400900, sourceText: 'Line 400' }],
+      [],
+      [],
+    );
+
+    expect(prompt).toContain('[nt_seg_400]');
+    expect(prompt).not.toContain('[seg_400]');
+  });
+
+  it('maps provider request IDs back to source segment IDs', () => {
+    const normalized = normalizeProviderSegments(
+      [{ id: 'nt_seg_400', translatedText: 'translated' }],
+      [{ id: 'seg_400', startMs: 400000, endMs: 400900, sourceText: 'Line 400' }],
+      [],
+      []
+    );
+
+    expect(normalized).toEqual([{ id: 'seg_400', translatedText: 'translated' }]);
   });
 });
 

@@ -6,9 +6,28 @@ import type {
   PreparationStatus,
   TranslationDebugInfo,
   TranslationProgressInfo,
+  NetflixVideoContext,
 } from './types';
 
 const STORAGE_PREFIX = 'nt_lib_';
+
+function confidenceRank(confidence: NetflixVideoContext['confidence']): number {
+  if (confidence === 'high') return 3;
+  if (confidence === 'medium') return 2;
+  if (confidence === 'low') return 1;
+  return 0;
+}
+
+function shouldApplyMetadata(
+  existing: NetflixVideoContext | undefined,
+  incoming: NetflixVideoContext | undefined
+): boolean {
+  return confidenceRank(incoming?.confidence) >= confidenceRank(existing?.confidence);
+}
+
+function isPersistableMetadata(context: NetflixVideoContext | undefined): boolean {
+  return confidenceRank(context?.confidence) >= 2 || !context?.confidence;
+}
 
 /**
  * Build a storage key from identifying fields
@@ -73,6 +92,10 @@ export async function saveSourceSubtitle(
     // Same hash → update source fields only, preserve translation data
     existing.subtitleResource = resource;
     existing.sourcePayload = payload;
+    if (isPersistableMetadata(resource.netflixContext)) {
+      if (resource.videoTitle) existing.videoTitle = resource.videoTitle;
+      if (resource.netflixContext) existing.netflixContext = resource.netflixContext;
+    }
     existing.updatedAt = Date.now();
     await chrome.storage.local.set({ [storageKey]: existing });
   } else {
@@ -85,10 +108,54 @@ export async function saveSourceSubtitle(
       sourceSubtitleHash: resource.contentHash,
       status: 'source-ready',
       updatedAt: Date.now(),
+      videoTitle: isPersistableMetadata(resource.netflixContext) ? resource.videoTitle : undefined,
+      netflixContext: isPersistableMetadata(resource.netflixContext) ? resource.netflixContext : undefined,
       subtitleResource: resource,
       sourcePayload: payload,
     };
     await chrome.storage.local.set({ [storageKey]: entry });
+  }
+}
+
+/**
+ * Update title/context metadata for all entries belonging to a video.
+ * Used when Netflix renders title metadata after subtitle acquisition.
+ */
+export async function updateEntriesVideoMetadata(
+  videoId: string,
+  videoTitle?: string,
+  netflixContext?: NetflixVideoContext
+): Promise<void> {
+  if (!videoTitle && !netflixContext) return;
+
+  const all = await chrome.storage.local.get(null);
+  const updates: Record<string, SubtitleLibraryEntry> = {};
+
+  for (const [storageKey, value] of Object.entries(all)) {
+    if (!storageKey.startsWith(STORAGE_PREFIX)) continue;
+
+    const entry = value as SubtitleLibraryEntry;
+    if (entry.videoId !== videoId) continue;
+    if (!shouldApplyMetadata(entry.netflixContext, netflixContext)) continue;
+
+    if (videoTitle) {
+      entry.videoTitle = videoTitle;
+      if (entry.subtitleResource) {
+        entry.subtitleResource.videoTitle = videoTitle;
+      }
+    }
+    if (netflixContext) {
+      entry.netflixContext = netflixContext;
+      if (entry.subtitleResource) {
+        entry.subtitleResource.netflixContext = netflixContext;
+      }
+    }
+    entry.updatedAt = Date.now();
+    updates[storageKey] = entry;
+  }
+
+  if (Object.keys(updates).length > 0) {
+    await chrome.storage.local.set(updates);
   }
 }
 
@@ -116,6 +183,10 @@ export async function saveTranslatedArtifact(
   existing.status = 'translation-ready';
   existing.translatedArtifact = artifact;
   delete existing.partialSegments;
+  delete existing.errorMessage;
+  if (existing.translationProgress) {
+    delete existing.translationProgress.latestError;
+  }
   existing.updatedAt = Date.now();
 
   await chrome.storage.local.set({ [storageKey]: existing });
@@ -246,8 +317,18 @@ export async function updatePreparationStatus(
   existing.updatedAt = Date.now();
   if (status === 'preparing') {
     existing.preparingSince = Date.now();
+    delete existing.errorMessage;
+    if (existing.translationProgress) {
+      delete existing.translationProgress.latestError;
+    }
   } else {
     delete existing.preparingSince;
+  }
+  if (status === 'translation-ready') {
+    delete existing.errorMessage;
+    if (existing.translationProgress) {
+      delete existing.translationProgress.latestError;
+    }
   }
   if (errorMessage) {
     existing.errorMessage = errorMessage;

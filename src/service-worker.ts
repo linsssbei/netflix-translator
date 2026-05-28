@@ -5,13 +5,22 @@ import {
   saveSourceSubtitle,
   saveTranslatedArtifact,
   saveTranslationDebugInfo,
+  updateEntriesVideoMetadata,
   updatePreparationStatus,
   updatePartialArtifact,
   detectStaleTranslations,
 } from './shared/subtitle-library';
 import { parseTtmlWithRegex, generateTranslationInput } from './shared/subtitle-parser';
 import { prepareTranslation } from './shared/translator-agent';
-import type { SubtitleLibraryEntry, DetailedStatusResponse, TranslatedSegment, AutoFillResult, TranslationProvider } from './shared/types';
+import type {
+  SubtitleLibraryEntry,
+  DetailedStatusResponse,
+  TranslatedSegment,
+  AutoFillResult,
+  TranslationProvider,
+  SubtitleResource,
+  NetflixVideoContext,
+} from './shared/types';
 import type { ProviderConfig } from './shared/translator-agent';
 import { loadContextProfile, saveContextProfile } from './shared/context-profile';
 import { performAutoFill } from './shared/auto-fill';
@@ -179,10 +188,11 @@ function mergeSegments(
 }
 
 const PENDING_PREFIX = 'nt_pending_';
+const VIDEO_CONTEXT_PREFIX = 'nt_video_context_';
 
 async function storePendingSubtitle(
   videoId: string,
-  resource: any,
+  resource: SubtitleResource,
   payload: string
 ): Promise<void> {
   const key = PENDING_PREFIX + videoId;
@@ -196,13 +206,46 @@ async function storePendingSubtitle(
 }
 
 async function getPendingSubtitle(videoId: string): Promise<{
-  resource: any;
+  resource: SubtitleResource;
   payload: string;
   detectedAt: number;
 } | null> {
   const key = PENDING_PREFIX + videoId;
   const result = await chrome.storage.local.get(key);
   return result[key] || null;
+}
+
+async function storeVideoContext(
+  videoId: string,
+  videoTitle?: string,
+  netflixContext?: NetflixVideoContext
+): Promise<void> {
+  if (!videoTitle && !netflixContext) return;
+  const confidence = netflixContext?.confidence;
+  if (confidence === 'low') {
+    console.log('[Service Worker] Ignoring low-confidence video title metadata:', {
+      videoId,
+      videoTitle,
+      source: netflixContext?.source,
+    });
+    return;
+  }
+  await chrome.storage.local.set({
+    [VIDEO_CONTEXT_PREFIX + videoId]: {
+      videoTitle,
+      netflixContext,
+      updatedAt: Date.now(),
+    },
+  });
+  await updateEntriesVideoMetadata(videoId, videoTitle, netflixContext);
+}
+
+async function getVideoContext(videoId: string): Promise<{
+  videoTitle?: string;
+  netflixContext?: NetflixVideoContext;
+} | null> {
+  const result = await chrome.storage.local.get(VIDEO_CONTEXT_PREFIX + videoId);
+  return result[VIDEO_CONTEXT_PREFIX + videoId] || null;
 }
 
 async function clearPendingSubtitle(videoId: string): Promise<void> {
@@ -228,8 +271,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   if (message.type === 'VIDEO_DETECTED') {
-    console.log('[Service Worker] Video detected:', message.videoId);
-    sendResponse({ status: 'acknowledged' });
+    console.log('[Service Worker] Video detected:', {
+      videoId: message.videoId,
+      videoTitle: message.videoTitle,
+      hasNetflixContext: Boolean(message.netflixContext),
+    });
+    storeVideoContext(message.videoId, message.videoTitle, message.netflixContext)
+      .then(() => sendResponse({ status: 'acknowledged' }))
+      .catch((err) => sendResponse({ status: 'error', message: err.message }));
     return true;
   }
 
@@ -389,6 +438,13 @@ async function handlePrepareSubtitles(
   // Step 1: If there's a pending subtitle for this video, save it to library now
   const pending = await getPendingSubtitle(videoId);
   if (pending) {
+    const storedContext = await getVideoContext(videoId);
+    if (storedContext?.videoTitle) {
+      pending.resource.videoTitle = storedContext.videoTitle;
+    }
+    if (storedContext?.netflixContext) {
+      pending.resource.netflixContext = storedContext.netflixContext;
+    }
     await saveSourceSubtitle(pending.resource, targetLanguage, pending.payload);
     await clearPendingSubtitle(videoId);
 
@@ -484,11 +540,12 @@ async function handleGetStatus(videoId: string): Promise<DetailedStatusResponse>
   const preparing = entries.filter((e) => e.status === 'preparing');
   const failed = entries.filter((e) => e.status === 'translation-failed');
 
-  // Pick the most relevant entry for status display
-  const activeEntry = preparing[0] || failed[0] || ready[0] || entries[0];
-
   let status: SubtitleLibraryEntry['status'] =
     ready.length > 0 ? 'translation-ready' : entries.length > 0 ? entries[0]!.status : 'video-detected';
+  const activeEntry =
+    status === 'translation-ready'
+      ? ready[0]
+      : preparing[0] || failed[0] || entries[0];
 
   // Detect stale preparing entries
   let isRetryable = RETRYABLE_PREPARATION_STATUSES.has(status);
@@ -645,23 +702,54 @@ async function handleAutoFill(
   videoTitle: string | undefined,
   sourceLanguage: string,
   targetLanguage: string,
-  _sourceSubtitleHash: string
+  sourceSubtitleHash: string
 ): Promise<AutoFillResult | null> {
-  const config = await getProviderConfig();
-  if (!config) {
-    throw new Error('No API key configured. Open extension options to set your API key.');
-  }
-
-  const providerType = resolveAutoFillProviderType(config);
-
-  return performAutoFill(
+  console.log('[Service Worker] Auto-fill context profile started:', {
     videoId,
     videoTitle,
     sourceLanguage,
     targetLanguage,
-    config.apiKey,
-    providerType,
-    config.endpoint,
-    config.model
-  );
+    sourceSubtitleHash,
+  });
+
+  const config = await getProviderConfig();
+  if (!config) {
+    console.warn('[Service Worker] Auto-fill skipped: no API key configured');
+    throw new Error('No API key configured. Open extension options to set your API key.');
+  }
+
+  const providerType = resolveAutoFillProviderType(config);
+  const entry = await getLibraryEntry(videoId, sourceLanguage, targetLanguage, sourceSubtitleHash);
+  const storedContext = await getVideoContext(videoId);
+  const resolvedTitle = videoTitle || entry?.videoTitle || entry?.subtitleResource?.videoTitle || storedContext?.videoTitle;
+  const netflixContext =
+    entry?.netflixContext ||
+    entry?.subtitleResource?.netflixContext ||
+    storedContext?.netflixContext;
+
+  try {
+    const result = await performAutoFill(
+      videoId,
+      resolvedTitle,
+      sourceLanguage,
+      targetLanguage,
+      config.apiKey,
+      providerType,
+      config.endpoint,
+      config.model,
+      netflixContext
+    );
+    console.log('[Service Worker] Auto-fill context profile completed:', {
+      videoId,
+      provider: providerType,
+      titleUsed: resolvedTitle,
+      characterCount: result.characterNames.length,
+      glossaryCount: result.glossary.length,
+      sourceURLCount: result.sourceURLs.length,
+    });
+    return result;
+  } catch (err) {
+    console.error('[Service Worker] Auto-fill context profile failed:', err);
+    throw err;
+  }
 }

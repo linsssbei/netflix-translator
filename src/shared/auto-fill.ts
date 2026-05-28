@@ -1,4 +1,4 @@
-import type { AutoFillResult } from './types';
+import type { AutoFillResult, NetflixVideoContext } from './types';
 import { generateObject } from 'ai';
 import { createDeepSeek } from '@ai-sdk/deepseek';
 import { createOpenAI } from '@ai-sdk/openai';
@@ -29,7 +29,8 @@ export async function performAutoFill(
   apiKey: string,
   provider: string,
   endpoint?: string,
-  model?: string
+  model?: string,
+  netflixContext?: NetflixVideoContext
 ): Promise<AutoFillResult> {
   const defaults: Record<string, { endpoint: string; model: string }> = {
     deepseek: { endpoint: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
@@ -48,11 +49,19 @@ export async function performAutoFill(
   }
 
   const titleInfo = videoTitle ? `titled "${videoTitle}"` : `with ID ${videoId}`;
+  const netflixHints = [
+    netflixContext?.title ? `Netflix title: ${netflixContext.title}` : undefined,
+    netflixContext?.synopsis ? `Netflix synopsis: ${netflixContext.synopsis}` : undefined,
+    netflixContext?.maturityRating ? `Maturity rating: ${netflixContext.maturityRating}` : undefined,
+    netflixContext?.genres?.length ? `Genres/tags: ${netflixContext.genres.join(', ')}` : undefined,
+  ].filter(Boolean).join('\n');
 
   const result = await generateObject({
     model: languageModel,
     schema: autoFillSchema,
     prompt: `You are helping create a translation context profile for a Netflix show/movie ${titleInfo}. The source language is ${sourceLanguage} and the target language is ${targetLanguage}.
+
+${netflixHints ? `Use these Netflix-provided context hints as higher-confidence context:\n${netflixHints}\n` : ''}
 
 Based on your knowledge of this title, provide:
 1. Tone instructions for translating subtitles

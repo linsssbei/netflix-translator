@@ -11,6 +11,30 @@ export interface VideoIdentity {
   url: string;
   /** Timestamp when the video was detected */
   detectedAt: number;
+  /** Optional title extracted from the Netflix page */
+  videoTitle?: string;
+  /** Optional Netflix page metadata for context generation */
+  netflixContext?: NetflixVideoContext;
+}
+
+export type NetflixMetadataConfidence = 'low' | 'medium' | 'high';
+
+/**
+ * Metadata extracted from the Netflix page for a detected video.
+ */
+export interface NetflixVideoContext {
+  /** Title shown by Netflix or browser metadata */
+  title?: string;
+  /** Synopsis/description visible in Netflix metadata */
+  synopsis?: string;
+  /** Maturity rating if visible on the page */
+  maturityRating?: string;
+  /** Genres or tags if visible on the page */
+  genres?: string[];
+  /** Where the metadata came from */
+  source?: string;
+  /** Reliability of the metadata source */
+  confidence?: NetflixMetadataConfidence;
 }
 
 /**
@@ -40,6 +64,10 @@ export interface SubtitleResource {
   discoveredAt: number;
   /** SHA-256 hash of the subtitle payload content */
   contentHash?: string;
+  /** Optional title extracted from the Netflix page */
+  videoTitle?: string;
+  /** Optional Netflix page metadata for context generation */
+  netflixContext?: NetflixVideoContext;
 }
 
 /**
@@ -242,6 +270,8 @@ export interface SubtitleLibraryEntry {
   updatedAt: number;
   /** Optional: video title (if known) */
   videoTitle?: string;
+  /** Optional: Netflix page metadata for context generation */
+  netflixContext?: NetflixVideoContext;
   /** Optional: subtitle resource metadata (if source was acquired) */
   subtitleResource?: SubtitleResource;
   /** Optional: raw subtitle payload (for translation processing) */
@@ -368,7 +398,7 @@ export type DetectionStatus =
  */
 export type ExtensionMessage =
   | { type: 'PAGE_LOADED'; url: string; timestamp: number }
-  | { type: 'VIDEO_DETECTED'; videoId: string; url: string }
+  | { type: 'VIDEO_DETECTED'; videoId: string; url: string; videoTitle?: string; netflixContext?: NetflixVideoContext }
   | { type: 'VIDEO_CHANGED'; videoId: string; url: string }
   | { type: 'SUBTITLE_CANDIDATE'; resource: SubtitleResource; payload?: string }
   | { type: 'PREPARE_SUBTITLES'; videoId: string; targetLanguage: string }

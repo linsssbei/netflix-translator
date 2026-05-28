@@ -11,6 +11,7 @@ import {
   getLibraryEntry,
   getEntriesForVideo,
   listAllEntries,
+  updateEntriesVideoMetadata,
 } from '../shared/subtitle-library';
 import {
   removeEntry,
@@ -129,6 +130,24 @@ describe('saveSourceSubtitle', () => {
     expect(result[key].subtitleResource).toEqual(resource);
   });
 
+  it('stores video title and Netflix context from the resource', async () => {
+    const resource = createResource({
+      videoTitle: 'The Test Episode',
+      netflixContext: {
+        title: 'The Test Episode',
+        synopsis: 'A test synopsis from Netflix.',
+      },
+    });
+
+    await saveSourceSubtitle(resource, 'zh-CN');
+
+    const key = 'nt_lib_' + buildLibraryKey('12345', 'en', 'zh-CN', resource.contentHash!);
+    const result = await chrome.storage.local.get(key);
+
+    expect(result[key].videoTitle).toBe('The Test Episode');
+    expect(result[key].netflixContext?.synopsis).toBe('A test synopsis from Netflix.');
+  });
+
   it('throws if resource has no content hash', async () => {
     const resource = createResource({ contentHash: undefined });
     await expect(saveSourceSubtitle(resource, 'zh-CN')).rejects.toThrow('missing content hash');
@@ -166,6 +185,45 @@ describe('saveSourceSubtitle', () => {
   });
 });
 
+describe('updateEntriesVideoMetadata', () => {
+  it('fills missing titles on existing entries for a video', async () => {
+    const resource = createResource();
+    await saveSourceSubtitle(resource, 'zh-CN');
+
+    await updateEntriesVideoMetadata('12345', 'Late Netflix Title', {
+      title: 'Late Netflix Title',
+      synopsis: 'Late synopsis.',
+    });
+
+    const entry = await getLibraryEntry('12345', 'en', 'zh-CN', resource.contentHash!);
+    expect(entry?.videoTitle).toBe('Late Netflix Title');
+    expect(entry?.netflixContext?.synopsis).toBe('Late synopsis.');
+    expect(entry?.subtitleResource?.videoTitle).toBe('Late Netflix Title');
+  });
+
+  it('does not overwrite a high-confidence title with low-confidence metadata', async () => {
+    const resource = createResource({
+      videoTitle: 'Real Title',
+      netflixContext: {
+        title: 'Real Title',
+        source: 'metadata-response',
+        confidence: 'high',
+      },
+    });
+    await saveSourceSubtitle(resource, 'zh-CN');
+
+    await updateEntriesVideoMetadata('12345', 'Browse', {
+      title: 'Browse',
+      source: 'dom',
+      confidence: 'low',
+    });
+
+    const entry = await getLibraryEntry('12345', 'en', 'zh-CN', resource.contentHash!);
+    expect(entry?.videoTitle).toBe('Real Title');
+    expect(entry?.netflixContext?.confidence).toBe('high');
+  });
+});
+
 describe('saveTranslatedArtifact', () => {
   it('saves artifact and updates status to translation-ready', async () => {
     const resource = createResource();
@@ -179,6 +237,39 @@ describe('saveTranslatedArtifact', () => {
 
     expect(result[key].status).toBe('translation-ready');
     expect(result[key].translatedArtifact).toEqual(artifact);
+  });
+
+  it('clears previous translation errors when artifact is saved', async () => {
+    const resource = createResource();
+    await saveSourceSubtitle(resource, 'zh-CN');
+
+    await updatePreparationStatus(
+      '12345',
+      'en',
+      'zh-CN',
+      resource.contentHash!,
+      'translation-failed',
+      'Provider failed'
+    );
+
+    const key = 'nt_lib_' + buildLibraryKey('12345', 'en', 'zh-CN', resource.contentHash!);
+    const stored = await chrome.storage.local.get(key);
+    stored[key].translationProgress = {
+      currentBatch: 1,
+      totalBatches: 1,
+      validatedSegmentCount: 0,
+      totalSegmentCount: 2,
+      providerModel: 'test-model',
+      latestError: 'Provider failed',
+    };
+    await chrome.storage.local.set(stored);
+
+    await saveTranslatedArtifact('12345', 'en', 'zh-CN', resource.contentHash!, createArtifact());
+
+    const result = await chrome.storage.local.get(key);
+    expect(result[key].status).toBe('translation-ready');
+    expect(result[key].errorMessage).toBeUndefined();
+    expect(result[key].translationProgress?.latestError).toBeUndefined();
   });
 
   it('throws if no entry exists', async () => {

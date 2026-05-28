@@ -100,6 +100,12 @@ class LibraryManager {
 
   private async loadEntries() {
     this.entries = await listAllEntries();
+    if (this.currentEntry) {
+      const refreshed = this.entries.find((entry) => entry.key === this.currentEntry?.key);
+      if (refreshed) {
+        this.currentEntry = refreshed;
+      }
+    }
     this.applyFilters();
   }
 
@@ -240,7 +246,7 @@ class LibraryManager {
   }
 
   private renderEntryCard(entry: SubtitleLibraryEntry): string {
-    const title = entry.videoTitle || `Video ${entry.videoId}`;
+    const title = entry.videoTitle || `Netflix Video ${entry.videoId}`;
     const langName = LANGUAGE_NAMES[entry.targetLanguage] || entry.targetLanguage;
     const diagnostics = computeQualityDiagnostics(entry);
 
@@ -249,7 +255,7 @@ class LibraryManager {
         <div class="entry-header">
           <div>
             <div class="entry-title">${this.escapeHtml(title)}</div>
-            <div class="entry-video-id">${entry.videoId}</div>
+            <div class="entry-video-id">${entry.videoTitle ? `Video ID: ${entry.videoId}` : 'Title not detected yet'}</div>
           </div>
           <span class="status-badge ${getStatusClass(entry.status)}">${entry.status}</span>
         </div>
@@ -280,29 +286,31 @@ class LibraryManager {
         return;
       }
 
-      const diagnostics = computeQualityDiagnostics(entry);
-      const title = entry.videoTitle || `Video ${entry.videoId}`;
-      const langName = LANGUAGE_NAMES[entry.targetLanguage] || entry.targetLanguage;
+      const freshEntry = details.entry;
+      this.currentEntry = freshEntry;
+      const diagnostics = computeQualityDiagnostics(freshEntry);
+      const title = freshEntry.videoTitle || `Netflix Video ${freshEntry.videoId}`;
+      const langName = LANGUAGE_NAMES[freshEntry.targetLanguage] || freshEntry.targetLanguage;
 
-      const eligibility = checkExportEligibility(entry);
+      const eligibility = checkExportEligibility(freshEntry);
       const isExportable = eligibility.eligible;
 
       content.innerHTML = `
         <div class="detail-header">
           <h2>${this.escapeHtml(title)}</h2>
           <div class="meta">
-            <span>Video ID: ${entry.videoId}</span> |
-            <span>${entry.sourceLanguage} → ${langName}</span> |
-            <span class="status-badge ${getStatusClass(entry.status)}">${entry.status}</span> |
-            <span>Source Hash: ${entry.sourceSubtitleHash}</span> |
-            <span>Captured: ${formatDate(entry.subtitleResource?.discoveredAt || entry.updatedAt)}</span>
+            <span>Video ID: ${freshEntry.videoId}</span> |
+            <span>${freshEntry.sourceLanguage} → ${langName}</span> |
+            <span class="status-badge ${getStatusClass(freshEntry.status)}">${freshEntry.status}</span> |
+            <span>Source Hash: ${freshEntry.sourceSubtitleHash}</span> |
+            <span>Captured: ${formatDate(freshEntry.subtitleResource?.discoveredAt || freshEntry.updatedAt)}</span>
           </div>
         </div>
 
-        ${this.renderExportSection(entry, isExportable)}
-        ${this.renderProfileSection(entry)}
-        ${this.renderDiagnostics(diagnostics, entry)}
-        ${entry.errorMessage ? this.renderError(entry) : ''}
+        ${this.renderExportSection(freshEntry, isExportable)}
+        ${this.renderProfileSection(freshEntry)}
+        ${this.renderDiagnostics(diagnostics, freshEntry)}
+        ${freshEntry.status !== 'translation-ready' && freshEntry.errorMessage ? this.renderError(freshEntry) : ''}
         ${this.renderSegments(details.sourceSegments, details.translatedSegments)}
 
         <div class="delete-section">
@@ -312,24 +320,24 @@ class LibraryManager {
       `;
 
       // Add export handlers
-      this.attachExportHandlers(entry);
+      this.attachExportHandlers(freshEntry);
 
       // Add delete handlers
       document.getElementById('deleteSingle')?.addEventListener('click', () => {
-        this.showDeleteModal(entry);
+        this.showDeleteModal(freshEntry);
       });
 
       document.getElementById('deleteAll')?.addEventListener('click', async () => {
-        if (confirm(`Delete all entries for video ${entry.videoId}?`)) {
-          await this.deleteAllForVideo(entry.videoId);
+        if (confirm(`Delete all entries for video ${freshEntry.videoId}?`)) {
+          await this.deleteAllForVideo(freshEntry.videoId);
         }
       });
 
       // Attach per-segment action handlers
-      this.attachSegmentHandlers(entry);
+      this.attachSegmentHandlers(freshEntry);
 
       // Load and render context profile
-      this.loadAndRenderProfile(entry);
+      this.loadAndRenderProfile(freshEntry);
     });
   }
 

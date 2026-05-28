@@ -315,8 +315,8 @@ describe('prepareTranslation', () => {
     // 150 segments / 100 per batch = 2 batches
     expect(callCount).toBe(2);
     expect(artifact.segments).toHaveLength(150);
-    expect(artifact.segments[0].translatedText).toBe('translated seg_0');
-    expect(artifact.segments[149].translatedText).toBe('translated seg_149');
+    expect(artifact.segments[0].translatedText).toBe('translated nt_seg_0');
+    expect(artifact.segments[149].translatedText).toBe('translated nt_seg_149');
   });
 
   it('validates each batch independently', async () => {
@@ -555,6 +555,30 @@ describe('prepareTranslation', () => {
     }
   });
 
+  it('retries a transient empty provider response once', async () => {
+    vi.mocked(generateObject)
+      .mockRejectedValueOnce(new Error('No object generated: the model did not return a response.'))
+      .mockResolvedValueOnce(
+        mockGenerateObjectResult([
+          { id: 'nt_seg_0', translatedText: '你好世界' },
+          { id: 'nt_seg_1', translatedText: '你好吗？' },
+          { id: 'nt_seg_2', translatedText: '这是测试。' },
+        ]) as any
+      );
+
+    const artifact = await prepareTranslation(
+      mockInput,
+      { apiKey: 'test-key' },
+      '12345',
+      'en',
+      'abc123',
+      'openai'
+    );
+
+    expect(vi.mocked(generateObject)).toHaveBeenCalledTimes(2);
+    expect(artifact.segments).toHaveLength(3);
+  });
+
   it('uses custom style profile when provided', async () => {
     
     vi.mocked(generateObject).mockResolvedValue(
@@ -725,9 +749,9 @@ describe('prepareTranslation', () => {
     );
 
     expect(artifact.segments).toHaveLength(3);
-    expect(artifact.segments[0].translatedText).toBe('translated seg_0');
-    expect(artifact.segments[1].translatedText).toBe('translated seg_1');
-    expect(artifact.segments[2].translatedText).toBe('translated seg_2');
+    expect(artifact.segments[0].translatedText).toBe('translated nt_seg_0');
+    expect(artifact.segments[1].translatedText).toBe('translated nt_seg_1');
+    expect(artifact.segments[2].translatedText).toBe('translated nt_seg_2');
   });
 
   it('preserves partial progress when one batch fails', async () => {

@@ -84,6 +84,38 @@ describe('Auto-fill', () => {
     expect(callArgs.prompt).toContain('Breaking Bad');
   });
 
+  it('passes Netflix context hints to the prompt when available', async () => {
+    vi.mocked(generateObject).mockResolvedValue({
+      object: {
+        tone: 'Grounded',
+        backgroundNotes: 'Family drama',
+        characterNames: [],
+        glossary: [],
+        sourceURLs: [],
+      },
+      usage: { inputTokens: 50, outputTokens: 20 },
+    } as any);
+
+    await performAutoFill(
+      '12345',
+      'My Show',
+      'en',
+      'zh-CN',
+      'test-key',
+      'deepseek',
+      undefined,
+      undefined,
+      {
+        synopsis: 'A Netflix-provided synopsis.',
+        maturityRating: 'TV-14',
+      }
+    );
+
+    const callArgs = vi.mocked(generateObject).mock.calls[0][0] as any;
+    expect(callArgs.prompt).toContain('A Netflix-provided synopsis.');
+    expect(callArgs.prompt).toContain('TV-14');
+  });
+
   it('uses video ID when title is not available', async () => {
     vi.mocked(generateObject).mockResolvedValue({
       object: {

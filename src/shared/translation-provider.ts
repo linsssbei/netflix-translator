@@ -105,11 +105,39 @@ export function createLanguageModel(config: AIProviderConfig): LanguageModel {
 const batchTranslationSchema = z.object({
   segments: z.array(
     z.object({
-      id: z.string().describe('Segment ID matching the source'),
+      id: z.string().describe('Segment ID matching the request exactly'),
       translatedText: z.string().describe('Translated subtitle text'),
     })
   ),
 });
+
+const PROVIDER_ID_PREFIX = 'nt_';
+
+export function toProviderSegmentId(segmentId: string): string {
+  return `${PROVIDER_ID_PREFIX}${segmentId}`;
+}
+
+export function normalizeProviderSegments(
+  segments: RawTranslatedSegment[],
+  batchSegments: CleanedTranslationInput['segments'],
+  contextBefore: CleanedTranslationInput['segments'],
+  contextAfter: CleanedTranslationInput['segments']
+): RawTranslatedSegment[] {
+  const idMap = new Map<string, string>();
+  for (const segment of [...batchSegments, ...contextBefore, ...contextAfter]) {
+    idMap.set(toProviderSegmentId(segment.id), segment.id);
+
+    const numericMatch = segment.id.match(/^seg_(\d+)$/);
+    if (numericMatch) {
+      idMap.set(numericMatch[1], segment.id);
+    }
+  }
+
+  return segments.map((segment) => ({
+    ...segment,
+    id: idMap.get(segment.id) ?? segment.id,
+  }));
+}
 
 /**
  * Build the default translation style profile
@@ -162,7 +190,8 @@ Rules:
 6. Do NOT add explanations, notes, or commentary.
 7. Respond ONLY with a JSON object containing a "segments" array.
 8. Only translate segments marked with [TRANSLATE]. Do NOT include segments marked with [CONTEXT] in your response.
-9. Your response must contain exactly the requested output segments — no more, no less.`;
+9. Your response must contain exactly the requested output segments — no more, no less.
+10. Segment IDs are opaque strings such as "nt_seg_123"; copy them exactly, including the "nt_" prefix.`;
 
   if (profile.glossary && profile.glossary.length > 0) {
     prompt += '\n\nGlossary (use these translations consistently):\n';
@@ -215,21 +244,21 @@ export function buildBatchPrompt(
   if (contextBefore.length > 0) {
     lines.push('[CONTEXT] (read only, do not translate):');
     for (const s of contextBefore) {
-      lines.push(`[${s.id}] ${s.startMs}ms-${s.endMs}ms: ${s.sourceText}`);
+      lines.push(`[${toProviderSegmentId(s.id)}] ${s.startMs}ms-${s.endMs}ms: ${s.sourceText}`);
     }
     lines.push('');
   }
 
   lines.push('[TRANSLATE] (translate these segments):');
   for (const s of batchSegments) {
-    lines.push(`[${s.id}] ${s.startMs}ms-${s.endMs}ms: ${s.sourceText}`);
+    lines.push(`[${toProviderSegmentId(s.id)}] ${s.startMs}ms-${s.endMs}ms: ${s.sourceText}`);
   }
 
   if (contextAfter.length > 0) {
     lines.push('');
     lines.push('[CONTEXT] (read only, do not translate):');
     for (const s of contextAfter) {
-      lines.push(`[${s.id}] ${s.startMs}ms-${s.endMs}ms: ${s.sourceText}`);
+      lines.push(`[${toProviderSegmentId(s.id)}] ${s.startMs}ms-${s.endMs}ms: ${s.sourceText}`);
     }
   }
 
@@ -283,16 +312,18 @@ export async function callAISDKProvider(
   });
 
   try {
-    const result = await generateObject({
+    const result = await generateObjectWithRetry({
       model,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
-      schema: batchTranslationSchema,
+      systemPrompt,
+      userPrompt,
     });
 
-    const segments = result.object.segments as RawTranslatedSegment[];
+    const segments = normalizeProviderSegments(
+      result.object.segments as RawTranslatedSegment[],
+      batchSegments,
+      contextBefore,
+      contextAfter
+    );
 
     await onStreamProgress?.({
       type: 'batch-complete',
@@ -326,4 +357,44 @@ export async function callAISDKProvider(
 
     throw err;
   }
+}
+
+async function generateObjectWithRetry({
+  model,
+  systemPrompt,
+  userPrompt,
+}: {
+  model: LanguageModel;
+  systemPrompt: string;
+  userPrompt: string;
+}): ReturnType<typeof generateObject<typeof batchTranslationSchema>> {
+  try {
+    return await generateObject({
+      model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      schema: batchTranslationSchema,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (!isTransientEmptyResponseError(message)) {
+      throw err;
+    }
+
+    return generateObject({
+      model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      schema: batchTranslationSchema,
+    });
+  }
+}
+
+function isTransientEmptyResponseError(message: string): boolean {
+  return message.includes('No object generated') ||
+    message.includes('model did not return a response');
 }
