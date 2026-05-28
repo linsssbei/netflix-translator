@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { selectEntriesForPreparation } from './service-worker';
+import { resolveAutoFillProviderType, selectEntriesForPreparation } from './service-worker';
 import type { SubtitleLibraryEntry } from './shared/types';
 
 function createEntry(
@@ -47,5 +47,20 @@ describe('selectEntriesForPreparation', () => {
 
     expect(selected).toHaveLength(1);
     expect(selected[0].targetLanguage).toBe('zh-CN');
+  });
+});
+
+describe('resolveAutoFillProviderType', () => {
+  it('uses the configured provider when no custom endpoint is set', () => {
+    expect(resolveAutoFillProviderType({ provider: 'deepseek' })).toBe('deepseek');
+  });
+
+  it('uses endpoint hints when custom endpoint is set', () => {
+    expect(
+      resolveAutoFillProviderType({
+        provider: 'openai',
+        endpoint: 'https://api.deepseek.com/v1',
+      })
+    ).toBe('deepseek');
   });
 });

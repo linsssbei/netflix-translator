@@ -2,7 +2,7 @@ import { generateObject, type LanguageModel } from 'ai';
 import { createDeepSeek } from '@ai-sdk/deepseek';
 import { createOpenAI } from '@ai-sdk/openai';
 import { z } from 'zod';
-import type { CleanedTranslationInput, TranslationDebugInfo } from './types';
+import type { CleanedTranslationInput, TranslationDebugInfo, TranslationContextProfile } from './types';
 
 /**
  * Raw segment returned by provider before domain validation
@@ -145,9 +145,12 @@ export function buildDefaultStyleProfile(
 }
 
 /**
- * Build system prompt from a style profile
+ * Build system prompt from a style profile and optional context profile
  */
-export function buildSystemPromptFromProfile(profile: TranslationStyleProfile): string {
+export function buildSystemPromptFromProfile(
+  profile: TranslationStyleProfile,
+  contextProfile?: TranslationContextProfile
+): string {
   let prompt = `You are a professional subtitle translator. Translate the following subtitles into ${profile.targetLanguageName}.
 
 Rules:
@@ -165,6 +168,27 @@ Rules:
     prompt += '\n\nGlossary (use these translations consistently):\n';
     for (const entry of profile.glossary) {
       prompt += `- "${entry.term}" → "${entry.translation}"\n`;
+    }
+  }
+
+  if (contextProfile) {
+    if (contextProfile.tone) {
+      prompt += `\n\nTone Instructions: ${contextProfile.tone}`;
+    }
+    if (contextProfile.backgroundNotes) {
+      prompt += `\n\nBackground: ${contextProfile.backgroundNotes}`;
+    }
+    if (contextProfile.characterNames.length > 0) {
+      prompt += '\n\nCharacter Names (use these consistently):\n';
+      for (const name of contextProfile.characterNames) {
+        prompt += `- "${name.original}" → "${name.translation}"\n`;
+      }
+    }
+    if (contextProfile.glossary.length > 0) {
+      prompt += '\n\nTitle-Specific Glossary:\n';
+      for (const entry of contextProfile.glossary) {
+        prompt += `- "${entry.term}" → "${entry.translation}"\n`;
+      }
     }
   }
 
@@ -238,9 +262,10 @@ export async function callAISDKProvider(
   contextPolicy: ContextPolicy,
   onStreamProgress?: OnStreamProgress,
   batchNumber?: number,
-  totalBatches?: number
+  totalBatches?: number,
+  contextProfile?: TranslationContextProfile
 ): Promise<ProviderBatchResult> {
-  const systemPrompt = buildSystemPromptFromProfile(profile);
+  const systemPrompt = buildSystemPromptFromProfile(profile, contextProfile);
   const userPrompt = buildBatchPrompt(
     batchSegments,
     contextBefore,

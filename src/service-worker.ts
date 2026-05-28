@@ -11,8 +11,10 @@ import {
 } from './shared/subtitle-library';
 import { parseTtmlWithRegex, generateTranslationInput } from './shared/subtitle-parser';
 import { prepareTranslation } from './shared/translator-agent';
-import type { SubtitleLibraryEntry, DetailedStatusResponse, TranslatedSegment } from './shared/types';
+import type { SubtitleLibraryEntry, DetailedStatusResponse, TranslatedSegment, AutoFillResult, TranslationProvider } from './shared/types';
 import type { ProviderConfig } from './shared/translator-agent';
+import { loadContextProfile, saveContextProfile } from './shared/context-profile';
+import { performAutoFill } from './shared/auto-fill';
 
 const STALE_PREPARING_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -23,13 +25,24 @@ const RETRYABLE_PREPARATION_STATUSES = new Set<SubtitleLibraryEntry['status']>([
 ]);
 
 async function getProviderConfig(): Promise<ProviderConfig | null> {
-  const result = await chrome.storage.local.get(['apiKey', 'model', 'customEndpoint']);
+  const result = await chrome.storage.local.get(['provider', 'apiKey', 'model', 'customEndpoint']);
   if (!result.apiKey) return null;
   return {
     apiKey: result.apiKey,
+    provider: result.provider || undefined,
     model: result.model || undefined,
     endpoint: result.customEndpoint || undefined,
   };
+}
+
+export function resolveAutoFillProviderType(config: {
+  provider?: TranslationProvider | string;
+  endpoint?: string;
+}): 'deepseek' | 'openai' {
+  if (config.endpoint?.includes('deepseek')) return 'deepseek';
+  if (config.endpoint?.includes('openai')) return 'openai';
+  if (config.provider === 'deepseek') return 'deepseek';
+  return 'openai';
 }
 
 async function translateEntry(
@@ -39,6 +52,14 @@ async function translateEntry(
   if (!entry.sourcePayload) {
     throw new Error('No source payload available for translation');
   }
+
+  // Load context profile for this entry
+  const contextProfile = await loadContextProfile(
+    entry.videoId,
+    entry.sourceLanguage,
+    entry.targetLanguage,
+    entry.sourceSubtitleHash
+  );
 
   // Parse the subtitle
   const segments = parseTtmlWithRegex(entry.sourcePayload);
@@ -115,6 +136,9 @@ async function translateEntry(
           accumulated,
           progress
         );
+      },
+      {
+        contextProfile: contextProfile || undefined,
       }
     );
 
@@ -241,6 +265,27 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     handleRetranslateSegment(message)
       .then(() => sendResponse({ status: 'ok' }))
       .catch((err) => sendResponse({ status: 'error', message: err.message }));
+    return true;
+  }
+
+  if (message.type === 'GET_CONTEXT_PROFILE') {
+    loadContextProfile(message.videoId, message.sourceLanguage, message.targetLanguage, message.sourceSubtitleHash)
+      .then((profile) => sendResponse({ type: 'CONTEXT_PROFILE_RESPONSE', profile }))
+      .catch((err) => sendResponse({ type: 'CONTEXT_PROFILE_RESPONSE', profile: null, error: err.message }));
+    return true;
+  }
+
+  if (message.type === 'SAVE_CONTEXT_PROFILE') {
+    saveContextProfile(message.profile)
+      .then(() => sendResponse({ status: 'ok' }))
+      .catch((err) => sendResponse({ status: 'error', message: err.message }));
+    return true;
+  }
+
+  if (message.type === 'AUTOFILL_CONTEXT_PROFILE') {
+    handleAutoFill(message.videoId, message.videoTitle, message.sourceLanguage, message.targetLanguage, message.sourceSubtitleHash)
+      .then((result) => sendResponse({ result }))
+      .catch((err) => sendResponse({ result: null, error: err.message }));
     return true;
   }
 
@@ -593,4 +638,30 @@ async function handleRetranslateSegment(message: {
   translateEntry(entry, config).catch((err: Error) => {
     console.error('[Service Worker] Retranslation failed:', err.message);
   });
+}
+
+async function handleAutoFill(
+  videoId: string,
+  videoTitle: string | undefined,
+  sourceLanguage: string,
+  targetLanguage: string,
+  _sourceSubtitleHash: string
+): Promise<AutoFillResult | null> {
+  const config = await getProviderConfig();
+  if (!config) {
+    throw new Error('No API key configured. Open extension options to set your API key.');
+  }
+
+  const providerType = resolveAutoFillProviderType(config);
+
+  return performAutoFill(
+    videoId,
+    videoTitle,
+    sourceLanguage,
+    targetLanguage,
+    config.apiKey,
+    providerType,
+    config.endpoint,
+    config.model
+  );
 }

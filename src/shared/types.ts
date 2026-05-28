@@ -166,7 +166,7 @@ export interface TranslationDebugInfo {
  * Progress metadata for batch translation
  */
 export interface TranslationProgressInfo {
-  /** Current batch number (1-indexed) */
+  /** Current batch number for sequential progress display (1-indexed) */
   currentBatch: number;
   /** Total number of batches */
   totalBatches: number;
@@ -178,6 +178,12 @@ export interface TranslationProgressInfo {
   providerModel: string;
   /** Latest error or debug summary, if any */
   latestError?: string;
+  /** Number of completed batches (parallel progress) */
+  completedBatches?: number;
+  /** Number of failed batches (parallel progress) */
+  failedBatches?: number;
+  /** Batch numbers currently in flight (parallel progress) */
+  inFlightBatches?: number[];
 }
 
 /**
@@ -273,6 +279,81 @@ export interface ExtensionSettings {
 }
 
 /**
+ * A character name entry in a translation context profile
+ */
+export interface CharacterNameEntry {
+  /** Original character name */
+  original: string;
+  /** Recommended translation for this character name */
+  translation: string;
+}
+
+/**
+ * A glossary entry in a translation context profile
+ */
+export interface GlossaryEntry {
+  /** Source term */
+  term: string;
+  /** Recommended translation */
+  translation: string;
+}
+
+/**
+ * A source URL from auto-fill lookup
+ */
+export interface ProfileSourceURL {
+  /** URL of the source */
+  url: string;
+  /** Label or title of the source */
+  label?: string;
+}
+
+/**
+ * Per-title translation context profile for consistent translation.
+ * Keyed by videoId, sourceLanguage, targetLanguage, sourceSubtitleHash.
+ */
+export interface TranslationContextProfile {
+  /** Associated video ID */
+  videoId: string;
+  /** Source language */
+  sourceLanguage: string;
+  /** Target language */
+  targetLanguage: string;
+  /** Source subtitle hash this profile was created for */
+  sourceSubtitleHash: string;
+  /** Tone instructions for translation */
+  tone: string;
+  /** Background notes about the title */
+  backgroundNotes: string;
+  /** Character name consistency entries */
+  characterNames: CharacterNameEntry[];
+  /** Glossary term entries */
+  glossary: GlossaryEntry[];
+  /** Source URLs used for auto-fill */
+  sourceURLs: ProfileSourceURL[];
+  /** Whether the profile was auto-filled (user may have edited since) */
+  autoFilled: boolean;
+  /** When the profile was last updated */
+  updatedAt: number;
+}
+
+/**
+ * Auto-fill result returned by the auto-fill service
+ */
+export interface AutoFillResult {
+  /** Suggested tone */
+  tone: string;
+  /** Suggested background notes */
+  backgroundNotes: string;
+  /** Suggested character names */
+  characterNames: CharacterNameEntry[];
+  /** Suggested glossary entries */
+  glossary: GlossaryEntry[];
+  /** Source URLs used */
+  sourceURLs: ProfileSourceURL[];
+}
+
+/**
  * Detection status for the popup's subtitle availability check
  */
 export type DetectionStatus =
@@ -301,7 +382,12 @@ export type ExtensionMessage =
   | { type: 'DELETE_SEGMENT'; videoId: string; sourceLanguage: string; targetLanguage: string; sourceSubtitleHash: string; segmentId: string }
   | { type: 'RETRANSLATE_SEGMENT'; videoId: string; sourceLanguage: string; targetLanguage: string; sourceSubtitleHash: string; segmentId: string }
   | { type: 'GET_DETECTION_STATUS'; videoId: string }
-  | { type: 'DETECTION_STATUS_RESPONSE'; status: DetectionStatus; videoId: string; savedHash?: string; detectedHash?: string; sourceLanguage?: string };
+  | { type: 'DETECTION_STATUS_RESPONSE'; status: DetectionStatus; videoId: string; savedHash?: string; detectedHash?: string; sourceLanguage?: string }
+  | { type: 'GET_CONTEXT_PROFILE'; videoId: string; sourceLanguage: string; targetLanguage: string; sourceSubtitleHash: string }
+  | { type: 'CONTEXT_PROFILE_RESPONSE'; profile: TranslationContextProfile | null }
+  | { type: 'SAVE_CONTEXT_PROFILE'; profile: TranslationContextProfile }
+  | { type: 'AUTOFILL_CONTEXT_PROFILE'; videoId: string; videoTitle?: string; sourceLanguage: string; targetLanguage: string; sourceSubtitleHash: string }
+  | { type: 'AUTOFILL_RESULT'; result: AutoFillResult | null; error?: string };
 
 /**
  * Detailed status response for the popup diagnostics panel

@@ -5,6 +5,7 @@ import type {
   TranslationProvider,
   TranslationDebugInfo,
   TranslationProgressInfo,
+  TranslationContextProfile,
 } from './types';
 import {
   createLanguageModel,
@@ -18,68 +19,101 @@ import {
   type OnStreamProgress,
 } from './translation-provider';
 
-const RETRY_CONTEXT_BEFORE = 5;
-const RETRY_CONTEXT_AFTER = 5;
-
-/**
- * Translation provider configuration (backward compatible)
- */
 export interface ProviderConfig {
   apiKey: string;
+  provider?: TranslationProvider;
   endpoint?: string;
   model?: string;
 }
 
-/**
- * Default provider configuration
- */
 export const DEFAULT_PROVIDER_CONFIG: Pick<Required<ProviderConfig>, 'endpoint' | 'model'> = {
   endpoint: 'https://api.deepseek.com/v1/chat/completions',
   model: 'deepseek-v4-pro',
 };
 
 const TRANSLATION_BATCH_SIZE = 100;
-const DEFAULT_CONTEXT_BEFORE = 3;
-const DEFAULT_CONTEXT_AFTER = 3;
+const DEFAULT_CONTEXT_BEFORE = 20;
+const DEFAULT_CONTEXT_AFTER = 20;
+const DEFAULT_MAX_CONCURRENCY = 10;
 
-/**
- * Validation result for translation response
- */
+export interface BatchPlan {
+  batchIndex: number;
+  batchNumber: number;
+  outputStart: number;
+  outputEnd: number;
+  outputSegments: CleanedTranslationInput['segments'];
+  contextBefore: CleanedTranslationInput['segments'];
+  contextAfter: CleanedTranslationInput['segments'];
+  outputIds: Set<string>;
+  contextIds: Set<string>;
+}
+
+export function planBatches(
+  segments: CleanedTranslationInput['segments'],
+  batchSize: number,
+  contextBeforeCount: number,
+  contextAfterCount: number
+): BatchPlan[] {
+  const totalSegments = segments.length;
+  const totalBatches = Math.ceil(totalSegments / batchSize);
+  const batches: BatchPlan[] = [];
+
+  for (let i = 0; i < totalBatches; i++) {
+    const outputStart = i * batchSize;
+    const outputEnd = Math.min(outputStart + batchSize, totalSegments);
+    const outputSegments = segments.slice(outputStart, outputEnd);
+
+    const contextBeforeStart = Math.max(0, outputStart - contextBeforeCount);
+    const contextBefore = segments.slice(contextBeforeStart, outputStart);
+
+    const contextAfterEnd = Math.min(totalSegments, outputEnd + contextAfterCount);
+    const contextAfter = segments.slice(outputEnd, contextAfterEnd);
+
+    const outputIds = new Set(outputSegments.map((s) => s.id));
+    const contextIds = new Set([
+      ...contextBefore.map((s) => s.id),
+      ...contextAfter.map((s) => s.id),
+    ]);
+
+    batches.push({
+      batchIndex: i,
+      batchNumber: i + 1,
+      outputStart,
+      outputEnd,
+      outputSegments,
+      contextBefore,
+      contextAfter,
+      outputIds,
+      contextIds,
+    });
+  }
+
+  return batches;
+}
+
 export interface TranslationValidationResult {
   valid: boolean;
   reason: string;
   validatedSegments: TranslatedSegment[];
 }
 
-/**
- * Detailed validation result that separates valid from invalid segments
- */
 export interface BatchValidationDetails {
-  /** Whether the entire batch is valid */
   valid: boolean;
-  /** Human-readable reason for failure */
   reason: string;
-  /** Segments that passed validation */
   validSegments: TranslatedSegment[];
-  /** IDs of segments that failed validation */
   invalidIds: string[];
-  /** Whether this is a partial failure (some valid, some invalid) */
   isPartialFailure: boolean;
 }
 
-/**
- * Validate a batch response with detailed per-segment results.
- * Separates valid segments from invalid ones for smart retry.
- */
 export function validateBatchResponseDetailed(
   inputSegments: CleanedTranslationInput['segments'],
-  translatedSegments: RawTranslatedSegment[]
+  translatedSegments: RawTranslatedSegment[],
+  contextIds?: Set<string>
 ): BatchValidationDetails {
   const inputMap = new Map(inputSegments.map((s) => [s.id, s]));
   const translatedMap = new Map<string, RawTranslatedSegment>();
   const invalidIds: string[] = [];
 
-  // Check for duplicate IDs in response
   for (const ts of translatedSegments) {
     if (translatedMap.has(ts.id)) {
       return {
@@ -93,8 +127,20 @@ export function validateBatchResponseDetailed(
     translatedMap.set(ts.id, ts);
   }
 
-  // Check for extra IDs (translator added segments we didn't ask for)
-  const extraIds = translatedSegments.map((s) => s.id).filter((id) => !inputMap.has(id));
+  if (contextIds && contextIds.size > 0) {
+    const contextIdsInResponse = translatedSegments.filter((ts) => contextIds.has(ts.id));
+    if (contextIdsInResponse.length > 0) {
+      return {
+        valid: false,
+        reason: `Response contains context-only segment IDs: ${contextIdsInResponse.map((s) => s.id).slice(0, 5).join(', ')}`,
+        validSegments: [],
+        invalidIds: inputSegments.map((s) => s.id),
+        isPartialFailure: false,
+      };
+    }
+  }
+
+  const extraIds = translatedSegments.map((s) => s.id).filter((id) => !inputMap.has(id) && !(contextIds && contextIds.has(id)));
   if (extraIds.length > 0) {
     return {
       valid: false,
@@ -105,7 +151,6 @@ export function validateBatchResponseDetailed(
     };
   }
 
-  // Build validated segments and identify invalid ones
   const validSegments: TranslatedSegment[] = [];
 
   for (const inputSeg of inputSegments) {
@@ -150,15 +195,12 @@ export function validateBatchResponseDetailed(
   };
 }
 
-/**
- * Validate a single batch translation response against its input segments.
- * Checks: exact IDs match, no duplicates, no extras, non-empty text, preserved timing.
- */
 export function validateBatchResponse(
   inputSegments: CleanedTranslationInput['segments'],
-  translatedSegments: RawTranslatedSegment[]
+  translatedSegments: RawTranslatedSegment[],
+  contextIds?: Set<string>
 ): TranslationValidationResult {
-  const detailed = validateBatchResponseDetailed(inputSegments, translatedSegments);
+  const detailed = validateBatchResponseDetailed(inputSegments, translatedSegments, contextIds);
   return {
     valid: detailed.valid,
     reason: detailed.reason,
@@ -166,10 +208,6 @@ export function validateBatchResponse(
   };
 }
 
-/**
- * Validate translation response against input segments.
- * @deprecated Use validateBatchResponse for per-batch validation
- */
 export function validateTranslationResponse(
   inputSegments: CleanedTranslationInput['segments'],
   translatedSegments: RawTranslatedSegment[]
@@ -177,27 +215,21 @@ export function validateTranslationResponse(
   return validateBatchResponse(inputSegments, translatedSegments);
 }
 
-/**
- * Callback for saving incremental batch progress
- */
 export type OnBatchComplete = (
   validatedSegments: TranslatedSegment[],
   progress: TranslationProgressInfo
 ) => void | Promise<void>;
 
-/**
- * Resolve provider type from config
- */
 function resolveProviderType(config: ProviderConfig): 'deepseek' | 'openai' | 'custom' {
+  if (config.provider === 'deepseek' || config.provider === 'openai') {
+    return config.provider;
+  }
   const endpoint = config.endpoint || DEFAULT_PROVIDER_CONFIG.endpoint;
   if (endpoint.includes('deepseek')) return 'deepseek';
   if (endpoint.includes('openai')) return 'openai';
   return 'custom';
 }
 
-/**
- * Create an AI SDK provider config from the legacy ProviderConfig
- */
 function toAIProviderConfig(config: ProviderConfig): AIProviderConfig {
   return {
     apiKey: config.apiKey,
@@ -207,17 +239,155 @@ function toAIProviderConfig(config: ProviderConfig): AIProviderConfig {
   };
 }
 
-/**
- * Full translation preparation pipeline using AI SDK and incremental batch processing:
- * 1. Create AI SDK language model from config
- * 2. Split segments into batches of 20
- * 3. For each batch, call the AI SDK provider with style profile and context policy
- * 4. Validate each batch independently (domain validation after AI SDK schema validation)
- * 5. Append validated segments via callback
- * 6. Mark complete only after all batches succeed
- *
- * On failure, partial progress is preserved for diagnostics.
- */
+export interface ParallelBatchResult {
+  batchIndex: number;
+  batchNumber: number;
+  validatedSegments: TranslatedSegment[];
+  progress: TranslationProgressInfo;
+  failed: boolean;
+  errorMessage?: string;
+}
+
+async function processBatch(
+  batch: BatchPlan,
+  model: ReturnType<typeof createLanguageModel>,
+  modelId: string,
+  styleProfile: TranslationStyleProfile,
+  contextPolicy: ContextPolicy,
+  totalBatches: number,
+  totalSegmentCount: number,
+  videoId: string,
+  _provider: TranslationProvider,
+  onDebug?: (debug: TranslationDebugInfo) => void | Promise<void>,
+  onStreamProgress?: OnStreamProgress,
+  contextProfile?: TranslationContextProfile
+): Promise<ParallelBatchResult> {
+  const batchSegments = batch.outputSegments;
+  const batchNumber = batch.batchNumber;
+
+  await onDebug?.({
+    videoId,
+    model: modelId,
+    strategy: 'batch',
+    requestPhase: 'started',
+    segmentCount: batchSegments.length,
+    updatedAt: Date.now(),
+  });
+
+  let batchResult: ProviderBatchResult;
+  try {
+    batchResult = await callAISDKProvider(
+      model,
+      modelId,
+      batchSegments,
+      batch.contextBefore,
+      batch.contextAfter,
+      styleProfile,
+      contextPolicy,
+      onStreamProgress,
+      batchNumber,
+      totalBatches,
+      contextProfile
+    );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[Translator Agent] Batch ${batchNumber}/${totalBatches} failed: ${message}`);
+
+    await onDebug?.({
+      videoId,
+      model: modelId,
+      strategy: 'batch',
+      requestPhase: 'failed',
+      segmentCount: batchSegments.length,
+      errorMessage: message,
+      updatedAt: Date.now(),
+    });
+
+    return {
+      batchIndex: batch.batchIndex,
+      batchNumber,
+      validatedSegments: [],
+      progress: {
+        currentBatch: batchNumber,
+        totalBatches,
+        validatedSegmentCount: 0,
+        totalSegmentCount,
+        providerModel: modelId,
+        latestError: message,
+      },
+      failed: true,
+      errorMessage: message,
+    };
+  }
+
+  const batchValidation = validateBatchResponseDetailed(
+    batchSegments,
+    batchResult.segments,
+    batch.contextIds
+  );
+
+  if (!batchValidation.valid) {
+    const validationMessage = `Batch ${batchNumber}/${totalBatches} validation failed: ${batchValidation.reason}`;
+    console.error(`[Translator Agent] ${validationMessage}`);
+
+    await onDebug?.({
+      videoId,
+      model: modelId,
+      strategy: 'batch',
+      requestPhase: 'failed',
+      segmentCount: batchSegments.length,
+      errorMessage: validationMessage,
+      updatedAt: Date.now(),
+      finishReason: batchResult.debug.finishReason,
+      responseContentLength: batchResult.debug.responseContentLength,
+      usage: batchResult.debug.usage,
+    });
+
+    return {
+      batchIndex: batch.batchIndex,
+      batchNumber,
+      validatedSegments: batchValidation.validSegments,
+      progress: {
+        currentBatch: batchNumber,
+        totalBatches,
+        validatedSegmentCount: batchValidation.validSegments.length,
+        totalSegmentCount,
+        providerModel: modelId,
+        latestError: validationMessage,
+      },
+      failed: true,
+      errorMessage: validationMessage,
+    };
+  }
+
+  await onDebug?.({
+    videoId,
+    model: modelId,
+    strategy: 'batch',
+    requestPhase: 'completed',
+    segmentCount: batchSegments.length,
+    validatedCount: batchValidation.validSegments.length,
+    updatedAt: Date.now(),
+    finishReason: batchResult.debug.finishReason,
+    responseContentLength: batchResult.debug.responseContentLength,
+    usage: batchResult.debug.usage,
+  });
+
+  return {
+    batchIndex: batch.batchIndex,
+    batchNumber,
+    validatedSegments: batchValidation.validSegments,
+    progress: {
+      currentBatch: batchNumber,
+      totalBatches,
+      validatedSegmentCount: batchValidation.validSegments.length,
+      totalSegmentCount,
+      providerModel: modelId,
+    },
+    failed: false,
+  };
+}
+
 export async function prepareTranslation(
   input: CleanedTranslationInput,
   config: ProviderConfig,
@@ -231,357 +401,137 @@ export async function prepareTranslation(
     styleProfile?: TranslationStyleProfile;
     contextPolicy?: ContextPolicy;
     onStreamProgress?: OnStreamProgress;
+    contextProfile?: TranslationContextProfile;
+    maxConcurrency?: number;
   }
 ): Promise<TranslatedArtifact> {
   const aiConfig = toAIProviderConfig(config);
   const model = createLanguageModel(aiConfig);
   const styleProfile = options?.styleProfile || buildDefaultStyleProfile(input.targetLanguage);
-  const contextPolicy: ContextPolicy = options?.contextPolicy || {
-    contextBeforeCount: DEFAULT_CONTEXT_BEFORE,
-    contextAfterCount: DEFAULT_CONTEXT_AFTER,
+  const contextBeforeCount = options?.contextPolicy?.contextBeforeCount ?? DEFAULT_CONTEXT_BEFORE;
+  const contextAfterCount = options?.contextPolicy?.contextAfterCount ?? DEFAULT_CONTEXT_AFTER;
+  const contextPolicy: ContextPolicy = {
+    contextBeforeCount,
+    contextAfterCount,
+    priorTranslationSummary: options?.contextPolicy?.priorTranslationSummary,
   };
+  const maxConcurrency = options?.maxConcurrency ?? DEFAULT_MAX_CONCURRENCY;
 
   const totalSegments = input.segments.length;
-  const totalBatches = Math.ceil(totalSegments / TRANSLATION_BATCH_SIZE);
-  const allValidatedSegments: TranslatedSegment[] = [];
+  const batches = planBatches(input.segments, TRANSLATION_BATCH_SIZE, contextBeforeCount, contextAfterCount);
+  const totalBatches = batches.length;
   const modelId = typeof model === 'string' ? model : (model as { modelId?: string }).modelId || aiConfig.model || 'unknown';
 
   console.log(
-    `[Translator Agent] Starting AI SDK batch translation: segments=${totalSegments}, batches=${totalBatches}, batchSize=${TRANSLATION_BATCH_SIZE}, provider=${aiConfig.provider}`
+    `[Translator Agent] Starting parallel batch translation: segments=${totalSegments}, batches=${totalBatches}, batchSize=${TRANSLATION_BATCH_SIZE}, concurrency=${maxConcurrency}, provider=${aiConfig.provider}`
   );
 
-  for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
-    const batchStart = batchIndex * TRANSLATION_BATCH_SIZE;
-    const batchEnd = Math.min(batchStart + TRANSLATION_BATCH_SIZE, totalSegments);
-    const batchSegments = input.segments.slice(batchStart, batchEnd);
-    const batchNumber = batchIndex + 1;
+  const allValidatedSegments: TranslatedSegment[] = [];
+  const batchResults = new Map<number, TranslatedSegment[]>();
+  let completedBatches = 0;
+  let failedBatches = 0;
+  const inFlightBatches: number[] = [];
 
-    // Gather context from adjacent segments
-    const contextStart = Math.max(0, batchStart - contextPolicy.contextBeforeCount);
-    const contextBefore = input.segments.slice(contextStart, batchStart);
-    const contextEnd = Math.min(totalSegments, batchEnd + contextPolicy.contextAfterCount);
-    const contextAfter = input.segments.slice(batchEnd, contextEnd);
-
-    // Build prior translation summary if available
-    let priorSummary: string | undefined;
-    if (allValidatedSegments.length > 0 && contextPolicy.priorTranslationSummary) {
-      priorSummary = contextPolicy.priorTranslationSummary;
-    }
-
-    console.log(
-      `[Translator Agent] Processing batch ${batchNumber}/${totalBatches}: segments=${batchSegments.length}, context=${contextBefore.length + contextAfter.length}`
-    );
-
-    await onDebug?.({
-      videoId,
-      model: modelId,
-      strategy: 'batch',
-      requestPhase: 'started',
-      segmentCount: batchSegments.length,
-      updatedAt: Date.now(),
-    });
-
-    let batchResult: ProviderBatchResult;
-    try {
-      batchResult = await callAISDKProvider(
-        model,
-        modelId,
-        batchSegments,
-        contextBefore,
-        contextAfter,
-        styleProfile,
-        { ...contextPolicy, priorTranslationSummary: priorSummary },
-        options?.onStreamProgress,
-        batchNumber,
-        totalBatches
-      );
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error(`[Translator Agent] Batch ${batchNumber}/${totalBatches} failed: ${message}`);
-
-      await onDebug?.({
-        videoId,
-        model: modelId,
-        strategy: 'batch',
-        requestPhase: 'failed',
-        segmentCount: batchSegments.length,
-        errorMessage: message,
-        updatedAt: Date.now(),
-      });
-
-      // Throw with partial progress preserved in the error for diagnostics
-      const partialError = new Error(
-        `Batch ${batchNumber}/${totalBatches} failed: ${message}`
-      ) as Error & { partialSegments?: TranslatedSegment[] };
-      partialError.partialSegments = allValidatedSegments;
-      throw partialError;
-    }
-
-    // Domain validation: exact IDs, no duplicates, no extras, non-empty text, preserved timing
-    const batchValidation = validateBatchResponseDetailed(batchSegments, batchResult.segments);
-
-    if (!batchValidation.valid) {
-      // Partial failure: some segments valid, some invalid → smart retry
-      if (batchValidation.isPartialFailure) {
-        console.log(
-          `[Translator Agent] Batch ${batchNumber}/${totalBatches} partial failure: ${batchValidation.reason}. Retrying ${batchValidation.invalidIds.length} failed segments with context.`
-        );
-
-        const retryResult = await retryFailedSegments({
-          allInputSegments: input.segments,
-          failedIds: batchValidation.invalidIds,
-          validSegments: batchValidation.validSegments,
-          model,
-          modelId,
-          styleProfile,
-          contextPolicy,
-          onStreamProgress: options?.onStreamProgress,
-          batchNumber,
-          totalBatches,
-          videoId,
-          onDebug,
-        });
-
-        if (retryResult.success) {
-          console.log(
-            `[Translator Agent] Retry succeeded for batch ${batchNumber}/${totalBatches}: recovered ${retryResult.recoveredSegments.length} segments`
-          );
-          // Merge valid segments from original response + recovered segments from retry
-          allValidatedSegments.push(...batchValidation.validSegments);
-          allValidatedSegments.push(...retryResult.recoveredSegments);
-        } else {
-          const retryMessage = `Batch ${batchNumber}/${totalBatches} validation failed after retry: ${retryResult.reason}`;
-          console.error(`[Translator Agent] ${retryMessage}`);
-
-          await onDebug?.({
-            videoId,
-            model: modelId,
-            strategy: 'batch',
-            requestPhase: 'failed',
-            segmentCount: batchSegments.length,
-            errorMessage: retryMessage,
-            updatedAt: Date.now(),
-            finishReason: batchResult.debug.finishReason,
-            responseContentLength: batchResult.debug.responseContentLength,
-            usage: batchResult.debug.usage,
-          });
-
-          const partialError = new Error(retryMessage) as Error & {
-            partialSegments?: TranslatedSegment[];
-          };
-          partialError.partialSegments = allValidatedSegments;
-          throw partialError;
-        }
-      } else {
-        // Total batch failure (all invalid or structural error) → no retry, stop immediately
-        const validationMessage = `Batch ${batchNumber}/${totalBatches} validation failed: ${batchValidation.reason}`;
-        console.error(`[Translator Agent] ${validationMessage}`);
-
-        await onDebug?.({
-          videoId,
-          model: modelId,
-          strategy: 'batch',
-          requestPhase: 'failed',
-          segmentCount: batchSegments.length,
-          errorMessage: validationMessage,
-          updatedAt: Date.now(),
-          finishReason: batchResult.debug.finishReason,
-          responseContentLength: batchResult.debug.responseContentLength,
-          usage: batchResult.debug.usage,
-        });
-
-        const partialError = new Error(validationMessage) as Error & {
-          partialSegments?: TranslatedSegment[];
-        };
-        partialError.partialSegments = allValidatedSegments;
-        throw partialError;
-      }
-    } else {
-      // Full success — append all valid segments
-      allValidatedSegments.push(...batchValidation.validSegments);
-    }
-
-    const progress: TranslationProgressInfo = {
-      currentBatch: batchNumber,
-      totalBatches,
-      validatedSegmentCount: allValidatedSegments.length,
-      totalSegmentCount: totalSegments,
-      providerModel: modelId,
-    };
-
-    console.log(
-      `[Translator Agent] Batch ${batchNumber}/${totalBatches} validated: ${allValidatedSegments.length}/${totalSegments} segments complete`
-    );
-
-    // Persist incremental progress
-    if (onBatchComplete) {
-      await onBatchComplete(batchValidation.validSegments, progress);
-    }
-
-    await onDebug?.({
-      videoId,
-      model: modelId,
-      strategy: 'batch',
-      requestPhase: 'completed',
-      segmentCount: batchSegments.length,
-      validatedCount: batchValidation.validSegments.length,
-      updatedAt: Date.now(),
-      finishReason: batchResult.debug.finishReason,
-      responseContentLength: batchResult.debug.responseContentLength,
-      usage: batchResult.debug.usage,
-    });
-  }
-
-    // All batches validated successfully
-    // Sort segments by start time to ensure correct ordering
-    const sortedSegments = allValidatedSegments.sort((a, b) => a.startMs - b.startMs);
-
-    return {
-      videoId,
-      sourceLanguage,
-      targetLanguage: input.targetLanguage,
-      sourceSubtitleHash,
-      preparedAt: Date.now(),
-      provider,
-      segments: sortedSegments,
-    };
-}
-
-// ─── Smart Retry for Partial Batch Failures ────────────────────────
-
-interface RetryResult {
-  success: boolean;
-  recoveredSegments: TranslatedSegment[];
-  reason: string;
-}
-
-interface RetryOptions {
-  allInputSegments: CleanedTranslationInput['segments'];
-  failedIds: string[];
-  validSegments: TranslatedSegment[];
-  model: ReturnType<typeof createLanguageModel>;
-  modelId: string;
-  styleProfile: TranslationStyleProfile;
-  contextPolicy: ContextPolicy;
-  onStreamProgress?: OnStreamProgress;
-  batchNumber: number;
-  totalBatches: number;
-  videoId: string;
-  onDebug?: (debug: TranslationDebugInfo) => void | Promise<void>;
-}
-
-/**
- * Retry only failed segments from a partial batch failure.
- * Includes adjacent context segments for better translation quality.
- * The context segments are marked as read-only and excluded from the response.
- */
-async function retryFailedSegments(options: RetryOptions): Promise<RetryResult> {
-  const {
-    allInputSegments,
-    failedIds,
-    validSegments,
-    model,
-    modelId,
-    styleProfile,
-    contextPolicy,
-    onStreamProgress,
-    batchNumber,
+  const trackedProgress: TranslationProgressInfo = {
+    currentBatch: 0,
     totalBatches,
-    videoId,
-    onDebug,
-  } = options;
+    validatedSegmentCount: 0,
+    totalSegmentCount: totalSegments,
+    providerModel: modelId,
+  };
 
-  const failedIdSet = new Set(failedIds);
+  const pool = new Set<Promise<void>>();
 
-  // Collect failed segments in order
-  const failedSegments = allInputSegments.filter((s) => failedIdSet.has(s.id));
+  async function runBatch(batch: BatchPlan): Promise<void> {
+    inFlightBatches.push(batch.batchNumber);
 
-  if (failedSegments.length === 0) {
-    return { success: true, recoveredSegments: [], reason: 'No failed segments to retry' };
-  }
-
-  // Build context: find indices of failed segments and gather surrounding context
-  const failedIndices = failedSegments.map((s) => allInputSegments.findIndex((seg) => seg.id === s.id));
-  const minIndex = Math.min(...failedIndices);
-  const maxIndex = Math.max(...failedIndices);
-
-  const contextStart = Math.max(0, minIndex - RETRY_CONTEXT_BEFORE);
-  const contextEnd = Math.min(allInputSegments.length, maxIndex + RETRY_CONTEXT_AFTER + 1);
-
-  // Context segments = surrounding segments that are NOT in the failed set
-  const contextBefore = allInputSegments
-    .slice(contextStart, minIndex)
-    .filter((s) => !failedIdSet.has(s.id));
-  const contextAfter = allInputSegments
-    .slice(maxIndex + 1, contextEnd)
-    .filter((s) => !failedIdSet.has(s.id));
-
-  // Prior translation summary: include already-validated translations as context
-  let priorSummary: string | undefined;
-  if (validSegments.length > 0) {
-    const recentValid = validSegments.slice(-RETRY_CONTEXT_BEFORE);
-    priorSummary = recentValid.map((s) => `[${s.id}] ${s.translatedText}`).join('\n');
-  }
-
-  console.log(
-    `[Translator Agent] Retrying ${failedSegments.length} segments with ${contextBefore.length + contextAfter.length} context segments`
-  );
-
-  await onDebug?.({
-    videoId,
-    model: modelId,
-    strategy: 'batch',
-    requestPhase: 'started',
-    segmentCount: failedSegments.length,
-    updatedAt: Date.now(),
-  });
-
-  let retryResult: ProviderBatchResult;
-  try {
-    retryResult = await callAISDKProvider(
+    const result = await processBatch(
+      batch,
       model,
       modelId,
-      failedSegments,
-      contextBefore,
-      contextAfter,
       styleProfile,
-      { ...contextPolicy, priorTranslationSummary: priorSummary },
-      onStreamProgress,
-      batchNumber,
-      totalBatches
+      contextPolicy,
+      totalBatches,
+      totalSegments,
+      videoId,
+      provider,
+      onDebug,
+      options?.onStreamProgress,
+      options?.contextProfile
     );
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return { success: false, recoveredSegments: [], reason: `Retry API call failed: ${message}` };
+
+    const inFlightIdx = inFlightBatches.indexOf(batch.batchNumber);
+    if (inFlightIdx !== -1) inFlightBatches.splice(inFlightIdx, 1);
+
+    if (result.failed) {
+      failedBatches++;
+      batchResults.set(batch.batchIndex, result.validatedSegments);
+      allValidatedSegments.push(...result.validatedSegments);
+    } else {
+      completedBatches++;
+      batchResults.set(batch.batchIndex, result.validatedSegments);
+      allValidatedSegments.push(...result.validatedSegments);
+    }
+
+    trackedProgress.currentBatch = result.progress.currentBatch;
+    trackedProgress.validatedSegmentCount = allValidatedSegments.length;
+    trackedProgress.completedBatches = completedBatches;
+    trackedProgress.failedBatches = failedBatches;
+    trackedProgress.inFlightBatches = [...inFlightBatches];
+    if (result.errorMessage) trackedProgress.latestError = result.errorMessage;
+
+    if (onBatchComplete && result.validatedSegments.length > 0) {
+      await onBatchComplete(result.validatedSegments, { ...trackedProgress });
+    }
   }
 
-  // Validate retry response — must recover ALL failed segments
-  const retryValidation = validateBatchResponseDetailed(failedSegments, retryResult.segments);
+  for (let i = 0; i < batches.length; i++) {
+    const batch = batches[i];
+    const promise = runBatch(batch).then(() => {
+      pool.delete(promise);
+    });
+    pool.add(promise);
 
-  if (!retryValidation.valid) {
-    return {
-      success: false,
-      recoveredSegments: [],
-      reason: `Retry validation failed: ${retryValidation.reason}`,
-    };
+    if (pool.size >= maxConcurrency) {
+      await Promise.race(pool);
+    }
   }
 
-  await onDebug?.({
-    videoId,
-    model: modelId,
-    strategy: 'batch',
-    requestPhase: 'completed',
-    segmentCount: failedSegments.length,
-    validatedCount: retryValidation.validSegments.length,
-    updatedAt: Date.now(),
-    finishReason: retryResult.debug.finishReason,
-    responseContentLength: retryResult.debug.responseContentLength,
-    usage: retryResult.debug.usage,
-  });
+  await Promise.all(pool);
+
+  if (failedBatches > 0) {
+    const failedIndices = Array.from(batchResults.entries())
+      .filter(([idx]) => {
+        const batch = batches[idx];
+        const segments = batchResults.get(idx);
+        const validatedCount = segments?.length ?? 0;
+        return validatedCount < batch.outputSegments.length;
+      })
+      .map(([idx]) => idx);
+
+    console.log(
+      `[Translator Agent] Translation completed with ${failedBatches} failed batch(es). ` +
+      `${allValidatedSegments.length}/${totalSegments} segments validated. ` +
+      `Failed batch indices: ${failedIndices.join(', ')}`
+    );
+
+    const partialError = new Error(
+      `Translation partially failed: ${failedBatches}/${totalBatches} batch(es) failed. ` +
+      `${allValidatedSegments.length}/${totalSegments} segments validated.`
+    ) as Error & { partialSegments?: TranslatedSegment[] };
+    partialError.partialSegments = [...allValidatedSegments].sort((a, b) => a.startMs - b.startMs);
+    throw partialError;
+  }
+
+  const sortedSegments = allValidatedSegments.sort((a, b) => a.startMs - b.startMs);
 
   return {
-    success: true,
-    recoveredSegments: retryValidation.validSegments,
-    reason: 'ok',
+    videoId,
+    sourceLanguage,
+    targetLanguage: input.targetLanguage,
+    sourceSubtitleHash,
+    preparedAt: Date.now(),
+    provider,
+    segments: sortedSegments,
   };
 }

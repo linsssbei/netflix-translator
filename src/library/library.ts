@@ -5,7 +5,8 @@ import {
   removeEntriesForVideo,
   computeQualityDiagnostics,
 } from '../shared/library-management';
-import type { SubtitleLibraryEntry, QualityDiagnostics } from '../shared/types';
+import type { SubtitleLibraryEntry, QualityDiagnostics, TranslationContextProfile, AutoFillResult } from '../shared/types';
+import { loadContextProfile, saveContextProfile, createEmptyProfile } from '../shared/context-profile';
 import { generateExport, checkExportEligibility } from '../shared/export-utils';
 import type { ExportFormat } from '../shared/export-types';
 
@@ -42,10 +43,35 @@ function getStatusClass(status: string): string {
   return `status-${status}`;
 }
 
+export function mergeAutoFillResultIntoProfile(
+  profile: TranslationContextProfile,
+  result: AutoFillResult,
+  currentValues?: Pick<TranslationContextProfile, 'tone' | 'backgroundNotes' | 'characterNames' | 'glossary'>
+): TranslationContextProfile {
+  const merged: TranslationContextProfile = {
+    ...profile,
+    tone: currentValues?.tone ?? profile.tone,
+    backgroundNotes: currentValues?.backgroundNotes ?? profile.backgroundNotes,
+    characterNames: currentValues?.characterNames ?? profile.characterNames,
+    glossary: currentValues?.glossary ?? profile.glossary,
+  };
+
+  if (!merged.tone) merged.tone = result.tone;
+  if (!merged.backgroundNotes) merged.backgroundNotes = result.backgroundNotes;
+  if (merged.characterNames.length === 0) merged.characterNames = result.characterNames;
+  if (merged.glossary.length === 0) merged.glossary = result.glossary;
+
+  merged.sourceURLs = result.sourceURLs;
+  merged.autoFilled = true;
+
+  return merged;
+}
+
 class LibraryManager {
   private entries: SubtitleLibraryEntry[] = [];
   private filteredEntries: SubtitleLibraryEntry[] = [];
   private currentEntry: SubtitleLibraryEntry | null = null;
+  private currentProfile: TranslationContextProfile | null = null;
   private deleteTarget: SubtitleLibraryEntry | null = null;
 
   constructor() {
@@ -274,6 +300,7 @@ class LibraryManager {
         </div>
 
         ${this.renderExportSection(entry, isExportable)}
+        ${this.renderProfileSection(entry)}
         ${this.renderDiagnostics(diagnostics, entry)}
         ${entry.errorMessage ? this.renderError(entry) : ''}
         ${this.renderSegments(details.sourceSegments, details.translatedSegments)}
@@ -300,6 +327,9 @@ class LibraryManager {
 
       // Attach per-segment action handlers
       this.attachSegmentHandlers(entry);
+
+      // Load and render context profile
+      this.loadAndRenderProfile(entry);
     });
   }
 
@@ -410,7 +440,7 @@ class LibraryManager {
         ${entry.translationProgress ? `
           <div style="margin-top: 8px; font-size: 12px;">
             Progress: ${entry.translationProgress.validatedSegmentCount}/${entry.translationProgress.totalSegmentCount} segments
-            (Batch ${entry.translationProgress.currentBatch}/${entry.translationProgress.totalBatches})
+            (Batch ${entry.translationProgress.completedBatches ?? entry.translationProgress.currentBatch}/${entry.translationProgress.totalBatches}${entry.translationProgress.failedBatches ? `, ${entry.translationProgress.failedBatches} failed` : ''})
           </div>
         ` : ''}
       </div>
@@ -521,6 +551,190 @@ class LibraryManager {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+  }
+
+  private async loadAndRenderProfile(entry: SubtitleLibraryEntry) {
+    const profile = await loadContextProfile(
+      entry.videoId,
+      entry.sourceLanguage,
+      entry.targetLanguage,
+      entry.sourceSubtitleHash
+    );
+    this.renderProfileFields(profile);
+    this.attachProfileHandlers(entry, profile);
+  }
+
+  private renderProfileSection(_entry: SubtitleLibraryEntry): string {
+    return `
+      <div class="profile-section">
+        <h3>Translation Context Profile</h3>
+        <p class="profile-hint">Edit context to improve translation consistency. Profiles are included in every batch prompt.</p>
+        <div class="profile-controls">
+          <button class="btn-secondary" id="autofill-profile">Auto-fill from Online Sources</button>
+          <span id="autofill-status" class="autofill-status"></span>
+        </div>
+        <div class="profile-fields">
+          <div class="profile-field">
+            <label for="profile-tone">Tone Instructions</label>
+            <textarea id="profile-tone" rows="2" placeholder="e.g., Keep the tone casual and humorous"></textarea>
+          </div>
+          <div class="profile-field">
+            <label for="profile-notes">Background Notes</label>
+            <textarea id="profile-notes" rows="3" placeholder="e.g., A sci-fi series about time travel"></textarea>
+          </div>
+          <div class="profile-field">
+            <label for="profile-names">Character Names (one per line: Original → Translation)</label>
+            <textarea id="profile-names" rows="3" placeholder="e.g.,主人公 → Hero"></textarea>
+          </div>
+          <div class="profile-field">
+            <label for="profile-glossary">Glossary (one per line: Term → Translation)</label>
+            <textarea id="profile-glossary" rows="3" placeholder="e.g.,魔法 → Magic"></textarea>
+          </div>
+          <button class="btn-primary" id="save-profile">Save Profile</button>
+          <span id="profile-save-status" class="profile-status"></span>
+        </div>
+      </div>
+    `;
+  }
+
+  private renderProfileFields(profile: TranslationContextProfile | null) {
+    const toneEl = document.getElementById('profile-tone') as HTMLTextAreaElement;
+    const notesEl = document.getElementById('profile-notes') as HTMLTextAreaElement;
+    const namesEl = document.getElementById('profile-names') as HTMLTextAreaElement;
+    const glossaryEl = document.getElementById('profile-glossary') as HTMLTextAreaElement;
+    if (!toneEl || !notesEl || !namesEl || !glossaryEl) return;
+
+    if (profile) {
+      toneEl.value = profile.tone;
+      notesEl.value = profile.backgroundNotes;
+      namesEl.value = profile.characterNames
+        .map((n) => `${n.original} → ${n.translation}`)
+        .join('\n');
+      glossaryEl.value = profile.glossary
+        .map((g) => `${g.term} → ${g.translation}`)
+        .join('\n');
+    } else {
+      toneEl.value = '';
+      notesEl.value = '';
+      namesEl.value = '';
+      glossaryEl.value = '';
+    }
+  }
+
+  private attachProfileHandlers(entry: SubtitleLibraryEntry, profile: TranslationContextProfile | null) {
+    this.currentProfile = profile || createEmptyProfile(
+      entry.videoId,
+      entry.sourceLanguage,
+      entry.targetLanguage,
+      entry.sourceSubtitleHash
+    );
+    this.renderProfileFields(profile);
+
+    const saveBtn = document.getElementById('save-profile');
+    saveBtn?.addEventListener('click', async () => {
+      await this.saveCurrentProfile(entry);
+    });
+
+    const autofillBtn = document.getElementById('autofill-profile');
+    autofillBtn?.addEventListener('click', async () => {
+      await this.autoFillProfile(entry);
+    });
+  }
+
+  private async saveCurrentProfile(_entry: SubtitleLibraryEntry) {
+    const profile = this.currentProfile;
+    if (!profile) return;
+
+    profile.tone = (document.getElementById('profile-tone') as HTMLTextAreaElement)?.value || '';
+    profile.backgroundNotes = (document.getElementById('profile-notes') as HTMLTextAreaElement)?.value || '';
+    profile.characterNames = this.parseNameEntries(
+      (document.getElementById('profile-names') as HTMLTextAreaElement)?.value || ''
+    );
+    profile.glossary = this.parseGlossaryEntries(
+      (document.getElementById('profile-glossary') as HTMLTextAreaElement)?.value || ''
+    );
+
+    await saveContextProfile(profile);
+
+    const statusEl = document.getElementById('profile-save-status');
+    if (statusEl) {
+      statusEl.textContent = 'Profile saved!';
+      setTimeout(() => { statusEl.textContent = ''; }, 3000);
+    }
+  }
+
+  private async autoFillProfile(entry: SubtitleLibraryEntry) {
+    const statusEl = document.getElementById('autofill-status');
+    if (statusEl) statusEl.textContent = 'Looking up context...';
+
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: 'AUTOFILL_CONTEXT_PROFILE',
+        videoId: entry.videoId,
+        videoTitle: entry.videoTitle,
+        sourceLanguage: entry.sourceLanguage,
+        targetLanguage: entry.targetLanguage,
+        sourceSubtitleHash: entry.sourceSubtitleHash,
+      });
+
+      const result: AutoFillResult | null = response?.result;
+
+      if (result) {
+        const profile = this.currentProfile;
+        if (!profile) return;
+
+        const mergedProfile = mergeAutoFillResultIntoProfile(profile, result, {
+          tone: (document.getElementById('profile-tone') as HTMLTextAreaElement)?.value || '',
+          backgroundNotes: (document.getElementById('profile-notes') as HTMLTextAreaElement)?.value || '',
+          characterNames: this.parseNameEntries(
+            (document.getElementById('profile-names') as HTMLTextAreaElement)?.value || ''
+          ),
+          glossary: this.parseGlossaryEntries(
+            (document.getElementById('profile-glossary') as HTMLTextAreaElement)?.value || ''
+          ),
+        });
+        this.currentProfile = mergedProfile;
+
+        await saveContextProfile(mergedProfile);
+        this.renderProfileFields(mergedProfile);
+
+        if (statusEl) statusEl.textContent = 'Auto-fill applied!';
+        setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 3000);
+      } else {
+        if (statusEl) statusEl.textContent = response?.error || 'Auto-fill failed.';
+      }
+    } catch (err) {
+      if (statusEl) statusEl.textContent = 'Auto-fill error.';
+      console.error('Auto-fill error:', err);
+    }
+  }
+
+  private parseNameEntries(text: string): Array<{ original: string; translation: string }> {
+    return text.split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line)
+      .map((line) => {
+        const parts = line.split('→').map((s) => s.trim());
+        if (parts.length === 2 && parts[0] && parts[1]) {
+          return { original: parts[0], translation: parts[1] };
+        }
+        return null;
+      })
+      .filter((entry): entry is { original: string; translation: string } => entry !== null);
+  }
+
+  private parseGlossaryEntries(text: string): Array<{ term: string; translation: string }> {
+    return text.split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line)
+      .map((line) => {
+        const parts = line.split('→').map((s) => s.trim());
+        if (parts.length === 2 && parts[0] && parts[1]) {
+          return { term: parts[0], translation: parts[1] };
+        }
+        return null;
+      })
+      .filter((entry): entry is { term: string; translation: string } => entry !== null);
   }
 }
 

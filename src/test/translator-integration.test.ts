@@ -253,7 +253,7 @@ describe('Translator Integration Tests (Chrome-Free)', () => {
           'fixture-hash-abc',
           'deepseek'
         )
-      ).rejects.toThrow('validation failed');
+      ).rejects.toThrow('partially failed');
     });
 
     it('preserves partial progress on failure', async () => {

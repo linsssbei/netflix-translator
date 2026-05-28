@@ -324,6 +324,9 @@ document.addEventListener('DOMContentLoaded', () => {
       totalSegmentCount: number;
       providerModel: string;
       latestError?: string;
+      completedBatches?: number;
+      failedBatches?: number;
+      inFlightBatches?: number[];
     };
     errorMessage?: string;
     debugInfo?: {
@@ -387,13 +390,22 @@ document.addEventListener('DOMContentLoaded', () => {
     // Progress bar
     const progress = data.progress;
     if (progress && progress.totalBatches > 0) {
-      const percent = Math.round((progress.currentBatch / progress.totalBatches) * 100);
+      const completedBatches = progress.completedBatches ?? progress.currentBatch;
+      const percent = Math.round((completedBatches / progress.totalBatches) * 100);
       diagPercentEl.textContent = `${percent}%`;
       progressFillEl.style.width = `${percent}%`;
 
       diagBatchEl.classList.remove('hidden');
       diagCurrentBatchEl.textContent = String(progress.currentBatch);
       diagTotalBatchesEl.textContent = String(progress.totalBatches);
+
+      // Show parallel progress if available
+      if (progress.completedBatches !== undefined) {
+        diagCurrentBatchEl.textContent = `${progress.completedBatches}/${progress.totalBatches}`;
+        if (progress.failedBatches && progress.failedBatches > 0) {
+          diagCurrentBatchEl.textContent += ` (${progress.failedBatches} failed)`;
+        }
+      }
 
       diagSegmentsEl.classList.remove('hidden');
       diagValidatedCountEl.textContent = String(progress.validatedSegmentCount);

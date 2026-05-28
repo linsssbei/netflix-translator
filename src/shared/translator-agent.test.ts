@@ -353,7 +353,7 @@ describe('prepareTranslation', () => {
           if (match?.groups?.id) ids.push(match.groups.id);
         }
       }
-      // Second batch returns TOTAL failure (all empty) — should not retry
+      // Second batch returns TOTAL failure (all empty) — parallel processing preserves first batch
       if (callCount === 2) {
         return mockGenerateObjectResult(
           ids.map((id) => ({ id, translatedText: '' }))
@@ -364,18 +364,22 @@ describe('prepareTranslation', () => {
       ) as any;
     });
 
-    await expect(
-      prepareTranslation(
+    try {
+      await prepareTranslation(
         largeInput,
         { apiKey: 'test-key' },
         '12345',
         'en',
         'abc123hash',
         'deepseek'
-      )
-    ).rejects.toThrow('validation failed');
+      );
+      expect.fail('Should have thrown');
+    } catch (err) {
+      expect((err as Error).message).toContain('partially failed');
+      // First batch succeeded — preserved in partial segments
+      expect((err as Error & { partialSegments: unknown[] }).partialSegments).toHaveLength(100);
+    }
 
-    // First batch succeeded, second failed (no retry for total failure)
     expect(callCount).toBe(2);
   });
 
@@ -472,7 +476,7 @@ describe('prepareTranslation', () => {
     });
   });
 
-  it('preserves partial segments on batch failure', async () => {
+  it('preserves partial segments on parallel batch failure', async () => {
     const largeInput: CleanedTranslationInput = {
       targetLanguage: 'zh-CN',
       segments: Array.from({ length: 150 }, (_, index) => ({
@@ -506,7 +510,7 @@ describe('prepareTranslation', () => {
           if (match?.groups?.id) ids.push(match.groups.id);
         }
       }
-      // Second batch fails
+      // Second batch fails with provider error
       if (callCount === 2) {
         throw new Error('Provider error');
       }
@@ -526,8 +530,7 @@ describe('prepareTranslation', () => {
       );
       expect.fail('Should have thrown');
     } catch (err) {
-      expect(err).toBeInstanceOf(Error);
-      expect((err as Error).message).toContain('Batch 2/2 failed');
+      expect((err as Error).message).toContain('partially failed');
       // Partial segments from first batch should be preserved (100 segments)
       expect((err as Error & { partialSegments: unknown[] }).partialSegments).toHaveLength(100);
     }
@@ -537,16 +540,19 @@ describe('prepareTranslation', () => {
     
     vi.mocked(generateObject).mockRejectedValue(new Error('Network error'));
 
-    await expect(
-      prepareTranslation(
+    try {
+      await prepareTranslation(
         mockInput,
         { apiKey: 'test-key' },
         '12345',
         'en',
         'abc123',
         'openai'
-      )
-    ).rejects.toThrow('Network error');
+      );
+      expect.fail('Should have thrown');
+    } catch (err) {
+      expect((err as Error).message).toContain('partially failed');
+    }
   });
 
   it('uses custom style profile when provided', async () => {
@@ -680,7 +686,51 @@ describe('prepareTranslation', () => {
     expect(streamEvents[1].type).toBe('batch-complete');
   });
 
-  it('smart retries partial batch failures with context', async () => {
+  it('processes all segments correctly with parallel batches', async () => {
+    let callCount = 0;
+    vi.mocked(generateObject).mockImplementation(async (options: any) => {
+      callCount++;
+      const userMsg = options.messages.find((m: any) => m.role === 'user');
+      const content = userMsg?.content as string;
+      const lines = content.split('\n');
+      const ids: string[] = [];
+      let inTranslate = false;
+      for (const line of lines) {
+        if (line.startsWith('[TRANSLATE]')) {
+          inTranslate = true;
+          continue;
+        }
+        if (line.startsWith('[CONTEXT]')) {
+          inTranslate = false;
+          continue;
+        }
+        if (inTranslate) {
+          const match = line.match(/^\[(?<id>[^\]]+)\]/);
+          if (match?.groups?.id) ids.push(match.groups.id);
+        }
+      }
+
+      return mockGenerateObjectResult(
+        ids.map((id) => ({ id, translatedText: `translated ${id}` }))
+      ) as any;
+    });
+
+    const artifact = await prepareTranslation(
+      mockInput,
+      { apiKey: 'test-key' },
+      '12345',
+      'en',
+      'abc123hash',
+      'deepseek'
+    );
+
+    expect(artifact.segments).toHaveLength(3);
+    expect(artifact.segments[0].translatedText).toBe('translated seg_0');
+    expect(artifact.segments[1].translatedText).toBe('translated seg_1');
+    expect(artifact.segments[2].translatedText).toBe('translated seg_2');
+  });
+
+  it('preserves partial progress when one batch fails', async () => {
     let callCount = 0;
     vi.mocked(generateObject).mockImplementation(async (options: any) => {
       callCount++;
@@ -713,83 +763,89 @@ describe('prepareTranslation', () => {
         ]) as any;
       }
 
-      // Retry call: return the missing segment
       return mockGenerateObjectResult(
         ids.map((id) => ({ id, translatedText: `translated ${id}` }))
       ) as any;
     });
 
-    const artifact = await prepareTranslation(
-      mockInput,
-      { apiKey: 'test-key' },
-      '12345',
-      'en',
-      'abc123hash',
-      'deepseek'
-    );
-
-    // Should have made 2 calls: original batch + retry
-    expect(callCount).toBe(2);
-    expect(artifact.segments).toHaveLength(3);
-    expect(artifact.segments[1].translatedText).toBe('translated seg_1');
-  });
-
-  it('fails on retry when partial retry also fails', async () => {
-    let callCount = 0;
-    vi.mocked(generateObject).mockImplementation(async () => {
-      callCount++;
-      // First call: partial failure (seg_1 empty)
-      if (callCount === 1) {
-        return mockGenerateObjectResult([
-          { id: 'seg_0', translatedText: 'translated seg_0' },
-          { id: 'seg_1', translatedText: '' },
-          { id: 'seg_2', translatedText: 'translated seg_2' },
-        ]) as any;
-      }
-      // Retry call: still missing seg_1
-      return mockGenerateObjectResult([
-        { id: 'seg_1', translatedText: '' },
-      ]) as any;
-    });
-
-    await expect(
-      prepareTranslation(
+    try {
+      await prepareTranslation(
         mockInput,
         { apiKey: 'test-key' },
         '12345',
         'en',
         'abc123hash',
         'deepseek'
-      )
-    ).rejects.toThrow('failed after retry');
-
-    expect(callCount).toBe(2);
+      );
+      expect.fail('Should have thrown');
+    } catch (err) {
+      // Parallel mode: partial failure is still a failure
+      expect((err as Error).message).toContain('partially failed');
+      // Preserved valid segments
+      expect((err as Error & { partialSegments: unknown[] }).partialSegments).toHaveLength(2);
+    }
   });
 
-  it('does not retry total batch failures', async () => {
-    let callCount = 0;
-    vi.mocked(generateObject).mockImplementation(async () => {
-      callCount++;
-      // All segments empty — total failure
-      return mockGenerateObjectResult([
+  it('calls onBatchComplete with valid segments from a partially failed batch', async () => {
+    vi.mocked(generateObject).mockResolvedValue(
+      mockGenerateObjectResult([
+        { id: 'seg_0', translatedText: 'translated seg_0' },
+        { id: 'seg_1', translatedText: '' },
+        { id: 'seg_2', translatedText: 'translated seg_2' },
+      ]) as any
+    );
+
+    const batchCompletions: Array<{ ids: string[]; failedBatches?: number }> = [];
+
+    try {
+      await prepareTranslation(
+        mockInput,
+        { apiKey: 'test-key' },
+        '12345',
+        'en',
+        'abc123hash',
+        'deepseek',
+        undefined,
+        (segments, progress) => {
+          batchCompletions.push({
+            ids: segments.map((s) => s.id),
+            failedBatches: progress.failedBatches,
+          });
+        }
+      );
+      expect.fail('Should have thrown');
+    } catch (err) {
+      expect((err as Error).message).toContain('partially failed');
+    }
+
+    expect(batchCompletions).toHaveLength(1);
+    expect(batchCompletions[0].ids).toEqual(['seg_0', 'seg_2']);
+    expect(batchCompletions[0].failedBatches).toBe(1);
+  });
+
+  it('fails completely when validation rejects all segments', async () => {
+    vi.mocked(generateObject).mockResolvedValue(
+      mockGenerateObjectResult([
         { id: 'seg_0', translatedText: '' },
         { id: 'seg_1', translatedText: '' },
         { id: 'seg_2', translatedText: '' },
-      ]) as any;
-    });
+      ]) as any
+    );
 
-    await expect(
-      prepareTranslation(
+    try {
+      await prepareTranslation(
         mockInput,
         { apiKey: 'test-key' },
         '12345',
         'en',
         'abc123hash',
         'deepseek'
-      )
-    ).rejects.toThrow('validation failed');
-
-    // Should only make 1 call — no retry for total failure
-    expect(callCount).toBe(1);
+      );
+      expect.fail('Should have thrown');
+    } catch (err) {
+      expect((err as Error).message).toContain('partially failed');
+      // No partial segments when all fail validation (no valid segments to preserve)
+      expect((err as Error & { partialSegments: unknown[] }).partialSegments).toHaveLength(0);
+    }
   });
 });
