@@ -394,6 +394,51 @@ export type DetectionStatus =
   | 'new-hash-detected';
 
 /**
+ * Subtitle placement position
+ */
+export type SubtitlePlacement = 'top' | 'bottom';
+
+/**
+ * Configuration for subtitle appearance (style, position, dimensions).
+ * Area dimensions and offsets are stored as percentages of the video rect.
+ */
+export interface SubtitleAppearanceConfig {
+  /** Font size in pixels (default 24) */
+  fontSize: number;
+  /** Placement position: 'top' or 'bottom' (default 'bottom') */
+  placement: SubtitlePlacement;
+  /** Subtitle area width as a percentage of video rect width (default 80) */
+  areaWidthPct: number;
+  /** Subtitle area height as a percentage of video rect height (default 15) */
+  areaHeightPct: number;
+  /** Horizontal offset as a percentage of video rect width (default 0) */
+  offsetXPct: number;
+  /** Vertical offset as a percentage of video rect height (default 12) */
+  offsetYPct: number;
+}
+
+export const DEFAULT_APPEARANCE_CONFIG: SubtitleAppearanceConfig = {
+  fontSize: 24,
+  placement: 'bottom',
+  areaWidthPct: 80,
+  areaHeightPct: 15,
+  offsetXPct: 0,
+  offsetYPct: 12,
+};
+
+export const APPEARANCE_BOUNDS: Record<
+  keyof SubtitleAppearanceConfig,
+  { min: number; max: number }
+> = {
+  fontSize: { min: 12, max: 48 },
+  placement: { min: 0, max: 1 },
+  areaWidthPct: { min: 20, max: 100 },
+  areaHeightPct: { min: 5, max: 50 },
+  offsetXPct: { min: -50, max: 50 },
+  offsetYPct: { min: 0, max: 50 },
+};
+
+/**
  * Message types for runtime communication
  */
 export type ExtensionMessage =
@@ -403,7 +448,8 @@ export type ExtensionMessage =
   | { type: 'SUBTITLE_CANDIDATE'; resource: SubtitleResource; payload?: string }
   | { type: 'PREPARE_SUBTITLES'; videoId: string; targetLanguage: string }
   | { type: 'PREPARATION_STATUS'; status: PreparationStatus; videoId: string }
-  | { type: 'TOGGLE_TRANSLATION'; enabled: boolean; videoId?: string; targetLanguage?: string }
+  | { type: 'TOGGLE_TRANSLATION'; enabled: boolean; videoId?: string; targetLanguage?: string; appearanceConfig?: SubtitleAppearanceConfig }
+  | { type: 'UPDATE_SUBTITLE_STYLE'; config: SubtitleAppearanceConfig }
   | { type: 'GET_RENDERING_STATUS' }
   | { type: 'GET_STATUS'; videoId: string }
   | { type: 'STATUS_RESPONSE'; status: PreparationStatus; videoId?: string }
