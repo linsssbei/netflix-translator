@@ -90,111 +90,68 @@ function readJsonLdContext(): Partial<NetflixVideoContext> {
   return {};
 }
 
-function readScriptStateContext(): Partial<NetflixVideoContext> {
-  const scripts = Array.from(document.querySelectorAll<HTMLScriptElement>('script'));
-  const titlePatterns = [
-    /"videoTitle"\s*:\s*"((?:\\.|[^"\\])+)"/,
-    /"titleName"\s*:\s*"((?:\\.|[^"\\])+)"/,
-    /"title"\s*:\s*"((?:\\.|[^"\\])+)"/,
-  ];
-  const synopsisPatterns = [
-    /"synopsis"\s*:\s*"((?:\\.|[^"\\])+)"/,
-    /"description"\s*:\s*"((?:\\.|[^"\\])+)"/,
-  ];
+const METADATA_STALENESS_MS = 30_000;
 
-  for (const script of scripts) {
-    const text = script.textContent || '';
-    if (!/videoTitle|titleName|synopsis|description/.test(text)) continue;
+class MetadataCache {
+  private entries = new Map<string, VideoMetadataEventDetail>();
 
-    const titleMatch = titlePatterns.map((pattern) => text.match(pattern)?.[1]).find(Boolean);
-    const synopsisMatch = synopsisPatterns.map((pattern) => text.match(pattern)?.[1]).find(Boolean);
-    const title = normalizeTitleCandidate(decodeScriptString(titleMatch));
-    const synopsis = cleanText(decodeScriptString(synopsisMatch));
-    if (title || synopsis) {
-      return { title, synopsis };
+  set(metadata: VideoMetadataEventDetail): void {
+    const existing = this.entries.get(metadata.videoId);
+    if (!existing || metadata.timestamp >= existing.timestamp) {
+      this.entries.set(metadata.videoId, metadata);
     }
   }
 
-  return {};
-}
+  get(videoId: string): VideoMetadataEventDetail | undefined {
+    const entry = this.entries.get(videoId);
+    if (!entry) return undefined;
+    if (Date.now() - entry.timestamp > METADATA_STALENESS_MS) return undefined;
+    return entry;
+  }
 
-function decodeScriptString(value: string | undefined): string | undefined {
-  if (!value) return undefined;
-  try {
-    return JSON.parse(`"${value}"`);
-  } catch {
-    return cleanText(value.replace(/\\"/g, '"').replace(/\\\\/g, '\\'));
+  clear(videoId?: string): void {
+    if (videoId) {
+      this.entries.delete(videoId);
+    } else {
+      this.entries.clear();
+    }
   }
 }
 
 export function extractNetflixVideoContext(): NetflixVideoContext {
-  const titleSelectors = [
-    '[data-uia="video-title"]',
-    '[data-uia="title"]',
-    '.video-title',
-    'h1',
-  ];
-
-  const visibleTitle = titleSelectors
-    .map((selector) => normalizeTitleCandidate(document.querySelector(selector)?.textContent || undefined))
-    .find(Boolean);
   const jsonLdContext = readJsonLdContext();
-  const scriptContext = readScriptStateContext();
+
   const title = cleanNetflixTitle(
-    visibleTitle ||
     jsonLdContext.title ||
-    scriptContext.title ||
     readMetaContent('meta[property="og:title"]') ||
     readMetaContent('meta[name="twitter:title"]') ||
     document.title
   );
 
-  const synopsisSelectors = [
-    '[data-uia="video-description"]',
-    '[data-uia="title-info-synopsis"]',
-    '.synopsis',
-    '.title-info-synopsis',
-  ];
-  const visibleSynopsis = synopsisSelectors
-    .map((selector) => cleanText(document.querySelector(selector)?.textContent))
-    .find(Boolean);
   const synopsis =
-    visibleSynopsis ||
     jsonLdContext.synopsis ||
-    scriptContext.synopsis ||
     readMetaContent('meta[name="description"]') ||
     readMetaContent('meta[property="og:description"]');
 
-  const maturityRating = cleanText(
-    document.querySelector('[data-uia="maturity-rating"], .maturity-rating')?.textContent
-  );
+  let source: string | undefined;
+  let confidence: NetflixMetadataConfidence | undefined;
 
-  const source = visibleTitle
-    ? 'dom-title-selector'
-    : jsonLdContext.title
-      ? 'json-ld'
-      : scriptContext.title
-        ? 'script-state'
-        : readMetaContent('meta[property="og:title"]') || readMetaContent('meta[name="twitter:title"]')
-          ? 'meta-tag'
-          : title
-            ? 'document-title'
-            : undefined;
-  const confidence: NetflixMetadataConfidence | undefined =
-    source === 'dom-title-selector' || source === 'json-ld' || source === 'meta-tag'
-      ? 'medium'
-      : source === 'script-state'
-        ? 'medium'
-        : source
-          ? 'low'
-          : undefined;
+  if (jsonLdContext.title) {
+    source = 'json-ld';
+    confidence = 'medium';
+  } else if (readMetaContent('meta[property="og:title"]') || readMetaContent('meta[name="twitter:title"]')) {
+    source = 'meta-tag';
+    confidence = 'medium';
+  } else if (title) {
+    source = 'document-title';
+    confidence = 'low';
+  }
 
   return {
     title,
     synopsis,
-    maturityRating,
-    source,
-    confidence,
+    source: source || 'dom-fallback',
+    confidence: confidence || 'low',
   };
 }
 
@@ -231,6 +188,7 @@ export class NetflixAdapter {
   private currentVideoId: string | null = null;
   private metadataRetryTimer: number | null = null;
   private observerInjected = false;
+  private metadataCache = new MetadataCache();
   private onVideoChange?: (video: VideoIdentity | null) => void;
   private onSubtitleCandidate?: (candidate: SubtitleCandidate) => void;
   private overlay: DebugOverlay;
@@ -329,6 +287,9 @@ export class NetflixAdapter {
     window.addEventListener('nt-video-metadata', ((event: Event) => {
       const customEvent = event as CustomEvent<VideoMetadataEventDetail>;
       const metadata = customEvent.detail;
+
+      this.metadataCache.set(metadata);
+
       if (!metadata.videoId || metadata.videoId !== this.currentVideoId) return;
 
       const title = normalizeTitleCandidate(metadata.title);
@@ -359,7 +320,6 @@ export class NetflixAdapter {
   private async processSubtitleCandidate(candidate: SubtitleCandidate): Promise<void> {
     const acquisitionMethod = 'page-world-clone';
 
-    // Create subtitle resource (Task 3.2)
     const resource = await createSubtitleResource(
       candidate.url,
       candidate.contentType,
@@ -368,8 +328,8 @@ export class NetflixAdapter {
       acquisitionMethod
     );
 
-    const netflixContext = extractNetflixVideoContext();
-    resource.videoTitle = netflixContext.title;
+    const netflixContext = this.resolveMetadata();
+    resource.videoTitle = netflixContext.title || this.currentVideoId || undefined;
     resource.netflixContext = netflixContext;
 
     // Override language if detected from URL
@@ -447,7 +407,7 @@ export class NetflixAdapter {
       this.reportVideoDetected(videoIdentity);
       this.scheduleMetadataRefresh(videoId, url);
     } else if (!videoId && this.currentVideoId) {
-      // Left a watch page
+      this.metadataCache.clear(this.currentVideoId);
       this.currentVideoId = null;
       this.clearMetadataRefresh();
       this.reportVideoLeft();
@@ -493,13 +453,14 @@ export class NetflixAdapter {
       if (this.currentVideoId !== videoId) return;
 
       const metadata = this.buildVideoMetadata();
-      if (metadata.videoTitle) {
-        this.reportVideoDetected({
-          videoId,
-          url,
-          detectedAt: Date.now(),
-          ...metadata,
-        });
+      this.reportVideoDetected({
+        videoId,
+        url,
+        detectedAt: Date.now(),
+        ...metadata,
+      });
+
+      if (this.hasRealTitle()) {
         this.clearMetadataRefresh();
         return;
       }
@@ -542,12 +503,39 @@ export class NetflixAdapter {
     return this.currentVideoId;
   }
 
+  private resolveMetadata(): NetflixVideoContext {
+    if (this.currentVideoId) {
+      const cached = this.metadataCache.get(this.currentVideoId);
+      if (cached) {
+        const title = normalizeTitleCandidate(cached.title);
+        return {
+          title,
+          synopsis: cleanText(cached.synopsis),
+          maturityRating: cleanText(cached.maturityRating),
+          genres: cached.genres,
+          source: cached.source || 'metadata-response',
+          confidence: cached.confidence || 'high',
+        };
+      }
+    }
+    return extractNetflixVideoContext();
+  }
+
   private buildVideoMetadata(): Pick<VideoIdentity, 'videoTitle' | 'netflixContext'> {
-    const netflixContext = extractNetflixVideoContext();
+    const netflixContext = this.resolveMetadata();
     return {
-      videoTitle: netflixContext.title,
+      videoTitle: netflixContext.title || this.currentVideoId || undefined,
       netflixContext,
     };
+  }
+
+  private hasRealTitle(): boolean {
+    if (this.currentVideoId) {
+      const cached = this.metadataCache.get(this.currentVideoId);
+      if (cached && cached.title) return true;
+    }
+    const context = extractNetflixVideoContext();
+    return !!context.title;
   }
 
   /**

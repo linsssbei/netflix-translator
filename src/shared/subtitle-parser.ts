@@ -113,11 +113,11 @@ export function parseTtmlWithRegex(payload: string): NormalizedSegment[] {
   while ((match = pRegex.exec(payload)) !== null) {
     const beginAttr = match[1];
     const innerContent = match[2];
-    const fullTag = match[0];
+    const closingAngleBracket = match[0].indexOf('>');
+    const openingTag = closingAngleBracket >= 0 ? match[0].substring(0, closingAngleBracket + 1) : match[0];
 
-    // Extract end attribute from the opening tag
-    const endMatch = fullTag.match(/\bend\s*=\s*["']([^"']*)["']/i);
-    const durMatch = fullTag.match(/\bdur\s*=\s*["']([^"']*)["']/i);
+    const endMatch = openingTag.match(/\bend\s*=\s*["']([^"']*)["']/i);
+    const durMatch = openingTag.match(/\bdur\s*=\s*["']([^"']*)["']/i);
 
     const startMs = parseTtmlTime(beginAttr, tickRate);
     let endMs: number;
@@ -138,7 +138,10 @@ export function parseTtmlWithRegex(payload: string): NormalizedSegment[] {
       .replace(/&gt;/g, '>')
       .replace(/&amp;/g, '&')
       .replace(/&quot;/g, '"')
-      .replace(/&#39;/g, "'");
+      .replace(/&#39;/g, "'")
+      .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+      .replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(parseInt(dec, 10)))
+      .replace(/&apos;/g, "'");
 
     const normalized = text
       .split('\n')
@@ -165,78 +168,72 @@ export function parseTtmlWithRegex(payload: string): NormalizedSegment[] {
   return segments;
 }
 
-/**
- * Parse TTML (Timed Text Markup Language) XML payload into normalized segments
- * Netflix serves subtitles in TTML format.
- * Uses DOMParser when available (browser), falls back to regex (service worker).
- */
+export function parseTtmlWithDom(payload: string): NormalizedSegment[] {
+  if (typeof DOMParser === 'undefined') {
+    throw new Error('DOMParser not available');
+  }
+
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(payload, 'application/xml');
+
+  const parserError = doc.querySelector('parsererror');
+  if (parserError) {
+    throw new Error('Failed to parse TTML: XML parsing error');
+  }
+
+  const paragraphs = doc.querySelectorAll('p');
+
+  if (paragraphs.length === 0) {
+    throw new Error('Failed to parse TTML: no timed paragraphs found');
+  }
+
+  const segments: NormalizedSegment[] = [];
+  const tickRateAttr =
+    doc.documentElement.getAttribute('ttp:tickRate') ||
+    doc.documentElement.getAttribute('tickRate');
+  const parsedTickRate = tickRateAttr ? parseFloat(tickRateAttr) : NaN;
+  const validTickRate = Number.isFinite(parsedTickRate) && parsedTickRate > 0 ? parsedTickRate : undefined;
+  let segIndex = 0;
+
+  paragraphs.forEach((p) => {
+    const beginAttr = p.getAttribute('begin');
+    const endAttr = p.getAttribute('end');
+    const durAttr = p.getAttribute('dur');
+
+    if (!beginAttr) return;
+
+    const startMs = parseTtmlTime(beginAttr, validTickRate);
+    let endMs: number;
+
+    if (endAttr) {
+      endMs = parseTtmlTime(endAttr, validTickRate);
+    } else if (durAttr) {
+      endMs = startMs + parseTtmlTime(durAttr, validTickRate);
+    } else {
+      return;
+    }
+
+    const sourceText = extractParagraphText(p);
+    if (!sourceText) return;
+
+    const id = `seg_${segIndex}`;
+    segIndex++;
+
+    segments.push({ id, startMs, endMs, sourceText });
+  });
+
+  if (segments.length === 0) {
+    throw new Error('Failed to parse TTML: no timed paragraphs found');
+  }
+
+  segments.sort((a, b) => a.startMs - b.startMs);
+  return segments;
+}
+
 export function parseTtml(payload: string): NormalizedSegment[] {
   if (!payload || payload.trim().length === 0) {
     return [];
   }
-
-  // Use DOMParser if available (content script / browser context)
-  if (typeof DOMParser !== 'undefined') {
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(payload, 'application/xml');
-
-    // Check for parse errors
-    const parserError = doc.querySelector('parsererror');
-    if (parserError) {
-      throw new Error('Failed to parse TTML: XML parsing error');
-    }
-
-    // Find all paragraph elements
-    const paragraphs = doc.querySelectorAll('p');
-
-    if (paragraphs.length === 0) {
-      throw new Error('Failed to parse TTML: no timed paragraphs found');
-    }
-
-    const segments: NormalizedSegment[] = [];
-    const tickRateAttr =
-      doc.documentElement.getAttribute('ttp:tickRate') ||
-      doc.documentElement.getAttribute('tickRate');
-    const parsedTickRate = tickRateAttr ? parseFloat(tickRateAttr) : NaN;
-    const validTickRate = Number.isFinite(parsedTickRate) && parsedTickRate > 0 ? parsedTickRate : undefined;
-    let segIndex = 0;
-
-    paragraphs.forEach((p) => {
-      const beginAttr = p.getAttribute('begin');
-      const endAttr = p.getAttribute('end');
-      const durAttr = p.getAttribute('dur');
-
-      if (!beginAttr) return;
-
-      const startMs = parseTtmlTime(beginAttr, validTickRate);
-      let endMs: number;
-
-      if (endAttr) {
-        endMs = parseTtmlTime(endAttr, validTickRate);
-      } else if (durAttr) {
-        endMs = startMs + parseTtmlTime(durAttr, validTickRate);
-      } else {
-        return;
-      }
-
-      const sourceText = extractParagraphText(p);
-      if (!sourceText) return;
-
-      const id = `seg_${segIndex}`;
-      segIndex++;
-
-      segments.push({ id, startMs, endMs, sourceText });
-    });
-
-    if (segments.length === 0) {
-      throw new Error('Failed to parse TTML: no timed paragraphs found');
-    }
-
-    segments.sort((a, b) => a.startMs - b.startMs);
-    return segments;
-  }
-
-  // Fallback: regex-based parser for environments without DOM (e.g., service worker)
   return parseTtmlWithRegex(payload);
 }
 

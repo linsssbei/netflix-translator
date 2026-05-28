@@ -215,7 +215,7 @@ describe('NetflixAdapter', () => {
       );
     });
 
-    it('re-reports video metadata when Netflix renders title after initial detection', async () => {
+    it('re-reports video metadata when network metadata arrives after initial detection', () => {
       const mock = getChromeMock();
       mock.runtime.sendMessage.mockResolvedValue({});
       document.title = 'Netflix';
@@ -227,12 +227,19 @@ describe('NetflixAdapter', () => {
         expect.objectContaining({
           type: 'VIDEO_DETECTED',
           videoId: '12345',
-          videoTitle: undefined,
+          videoTitle: '12345',
         })
       );
 
-      document.body.innerHTML = '<h1 data-uia="video-title">Delayed Episode Title</h1>';
-      await vi.advanceTimersByTimeAsync(1000);
+      window.dispatchEvent(new CustomEvent('nt-video-metadata', {
+        detail: {
+          videoId: '12345',
+          title: 'Delayed Episode Title',
+          source: 'metadata-response',
+          confidence: 'high',
+          timestamp: Date.now(),
+        },
+      }));
 
       expect(mock.runtime.sendMessage).toHaveBeenLastCalledWith(
         expect.objectContaining({
@@ -243,12 +250,10 @@ describe('NetflixAdapter', () => {
       );
     });
 
-    it('still reports video detection when Netflix script metadata cannot be decoded', () => {
+    it('still reports video detection when network metadata event provides the title', () => {
       const mock = getChromeMock();
       mock.runtime.sendMessage.mockResolvedValue({});
-      const script = document.createElement('script');
-      script.textContent = '"videoTitle":"Broken \\q metadata"';
-      document.body.appendChild(script);
+      document.title = '';
 
       vi.stubGlobal('location', { href: 'https://www.netflix.com/watch/12345' });
       adapter.start();
@@ -264,11 +269,18 @@ describe('NetflixAdapter', () => {
   });
 
   describe('extractNetflixVideoContext', () => {
-    it('prefers visible Netflix title over document title', () => {
-      document.body.innerHTML = '<h1 data-uia="video-title">Visible Title</h1>';
+    it('prefers JSON-LD title over document title', () => {
+      const script = document.createElement('script');
+      script.type = 'application/ld+json';
+      script.textContent = JSON.stringify({
+        '@type': 'TVEpisode',
+        name: 'JSON-LD Title',
+        description: 'JSON-LD synopsis.',
+      });
+      document.head.appendChild(script);
       document.title = 'Fallback Title - Netflix';
 
-      expect(extractNetflixVideoContext().title).toBe('Visible Title');
+      expect(extractNetflixVideoContext().title).toBe('JSON-LD Title');
     });
 
     it('extracts title from JSON-LD metadata', () => {
@@ -288,27 +300,34 @@ describe('NetflixAdapter', () => {
           synopsis: 'JSON synopsis.',
         })
       );
+      expect(extractNetflixVideoContext().confidence).toBe('medium');
+      expect(extractNetflixVideoContext().source).toBe('json-ld');
     });
 
-    it('extracts title from accessible playback labels', () => {
-      document.body.innerHTML = '<button aria-label="Play Big Movie">Play</button>';
+    it('falls back to meta tags for synopsis', () => {
+      const meta = document.createElement('meta');
+      meta.setAttribute('name', 'description');
+      meta.setAttribute('content', 'Meta description.');
+      document.head.appendChild(meta);
+      document.title = 'Netflix';
+
+      expect(extractNetflixVideoContext().synopsis).toBe('Meta description.');
+    });
+
+    it('does not extract metadata from Netflix DOM selectors', () => {
+      document.body.innerHTML = '<h1 data-uia="video-title">Visible Title</h1>';
       document.title = 'Netflix';
 
       expect(extractNetflixVideoContext().title).toBeUndefined();
     });
 
-    it('extracts title from Netflix script state when DOM labels are absent', () => {
+    it('does not extract metadata from script state scanning', () => {
       const script = document.createElement('script');
       script.textContent = 'window.__netflix = {"videoTitle":"Script State Title","synopsis":"Script synopsis."};';
       document.body.appendChild(script);
       document.title = 'Netflix';
 
-      expect(extractNetflixVideoContext()).toEqual(
-        expect.objectContaining({
-          title: 'Script State Title',
-          synopsis: 'Script synopsis.',
-        })
-      );
+      expect(extractNetflixVideoContext().title).toBeUndefined();
     });
 
     it('does not treat navigation labels as video titles', () => {
@@ -316,6 +335,27 @@ describe('NetflixAdapter', () => {
       document.title = 'Netflix';
 
       expect(extractNetflixVideoContext().title).toBeUndefined();
+    });
+
+    it('reports low confidence and dom-fallback source when only document.title is available', () => {
+      document.title = 'My Episode - Netflix';
+
+      const ctx = extractNetflixVideoContext();
+      expect(ctx.title).toBe('My Episode');
+      expect(ctx.confidence).toBe('low');
+      expect(ctx.source).toBe('document-title');
+    });
+
+    it('reports medium confidence from meta tags', () => {
+      const meta = document.createElement('meta');
+      meta.setAttribute('property', 'og:title');
+      meta.setAttribute('content', 'OG Title');
+      document.head.appendChild(meta);
+
+      const ctx = extractNetflixVideoContext();
+      expect(ctx.title).toBe('OG Title');
+      expect(ctx.confidence).toBe('medium');
+      expect(ctx.source).toBe('meta-tag');
     });
   });
 
@@ -372,6 +412,337 @@ describe('NetflixAdapter', () => {
       }));
 
       expect(mock.runtime.sendMessage.mock.calls.length).toBe(callCount);
+    });
+
+    it('caches metadata events and uses them when resolving metadata for video transitions', () => {
+      const mock = getChromeMock();
+      mock.runtime.sendMessage.mockResolvedValue({});
+
+      vi.stubGlobal('location', { href: 'https://www.netflix.com/watch/12345' });
+      adapter.start();
+
+      window.dispatchEvent(new CustomEvent('nt-video-metadata', {
+        detail: {
+          videoId: '12345',
+          title: 'Cached Title',
+          synopsis: 'Cached synopsis.',
+          source: 'metadata-response',
+          confidence: 'high',
+          timestamp: Date.now(),
+        },
+      }));
+
+      expect(mock.runtime.sendMessage).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          type: 'VIDEO_DETECTED',
+          videoId: '12345',
+          videoTitle: 'Cached Title',
+          netflixContext: expect.objectContaining({
+            title: 'Cached Title',
+            confidence: 'high',
+          }),
+        })
+      );
+    });
+
+    it('falls back to video ID in videoTitle when no metadata title is available', () => {
+      const mock = getChromeMock();
+      mock.runtime.sendMessage.mockResolvedValue({});
+      document.title = '';
+
+      vi.stubGlobal('location', { href: 'https://www.netflix.com/watch/12345' });
+      adapter.start();
+
+      expect(mock.runtime.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'VIDEO_DETECTED',
+          videoId: '12345',
+          videoTitle: '12345',
+        })
+      );
+    });
+
+    it('stores metadata for any video ID in cache even if video ID mismatch', () => {
+      const mock = getChromeMock();
+      mock.runtime.sendMessage.mockResolvedValue({});
+
+      vi.stubGlobal('location', { href: 'https://www.netflix.com/watch/12345' });
+      adapter.start();
+
+      window.dispatchEvent(new CustomEvent('nt-video-metadata', {
+        detail: {
+          videoId: '99999',
+          title: 'Other Video Title',
+          source: 'metadata-response',
+          confidence: 'high',
+          timestamp: Date.now(),
+        },
+      }));
+
+      window.dispatchEvent(new CustomEvent('nt-url-changed', {
+        detail: { url: 'https://www.netflix.com/watch/99999', timestamp: Date.now() },
+      }));
+
+      expect(mock.runtime.sendMessage).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          type: 'VIDEO_DETECTED',
+          videoId: '99999',
+          videoTitle: 'Other Video Title',
+        })
+      );
+    });
+  });
+
+  describe('metadata cache (network-first without DOM)', () => {
+    it('resolves video context purely from intercepted JSON events without any Netflix DOM fixtures', () => {
+      const mock = getChromeMock();
+      mock.runtime.sendMessage.mockResolvedValue({});
+      document.title = '';
+
+      vi.stubGlobal('location', { href: 'https://www.netflix.com/watch/80012345' });
+      adapter.start();
+
+      expect(mock.runtime.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'VIDEO_DETECTED',
+          videoId: '80012345',
+          videoTitle: '80012345',
+          netflixContext: expect.objectContaining({
+            confidence: 'low',
+            source: 'dom-fallback',
+          }),
+        })
+      );
+
+      window.dispatchEvent(new CustomEvent('nt-video-metadata', {
+        detail: {
+          videoId: '80012345',
+          title: 'Title from Network Event',
+          synopsis: 'Synopsis from network',
+          maturityRating: 'TV-MA',
+          genres: ['Drama', 'Thriller'],
+          source: 'metadata-response',
+          confidence: 'high',
+          timestamp: Date.now(),
+        },
+      }));
+
+      expect(mock.runtime.sendMessage).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          type: 'VIDEO_DETECTED',
+          videoId: '80012345',
+          videoTitle: 'Title from Network Event',
+          netflixContext: expect.objectContaining({
+            title: 'Title from Network Event',
+            synopsis: 'Synopsis from network',
+            maturityRating: 'TV-MA',
+            genres: ['Drama', 'Thriller'],
+            confidence: 'high',
+            source: 'metadata-response',
+          }),
+        })
+      );
+    });
+
+    it('stores and returns metadata for multiple video IDs in cache', () => {
+      const mock = getChromeMock();
+      mock.runtime.sendMessage.mockResolvedValue({});
+
+      vi.stubGlobal('location', { href: 'https://www.netflix.com/browse' });
+      adapter.start();
+
+      window.dispatchEvent(new CustomEvent('nt-video-metadata', {
+        detail: {
+          videoId: '11111',
+          title: 'Video One',
+          source: 'metadata-response',
+          confidence: 'high',
+          timestamp: Date.now(),
+        },
+      }));
+
+      window.dispatchEvent(new CustomEvent('nt-video-metadata', {
+        detail: {
+          videoId: '22222',
+          title: 'Video Two',
+          source: 'metadata-response',
+          confidence: 'high',
+          timestamp: Date.now(),
+        },
+      }));
+
+      window.dispatchEvent(new CustomEvent('nt-url-changed', {
+        detail: { url: 'https://www.netflix.com/watch/11111', timestamp: Date.now() },
+      }));
+
+      expect(mock.runtime.sendMessage).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          videoId: '11111',
+          videoTitle: 'Video One',
+          netflixContext: expect.objectContaining({
+            title: 'Video One',
+            confidence: 'high',
+          }),
+        })
+      );
+
+      window.dispatchEvent(new CustomEvent('nt-url-changed', {
+        detail: { url: 'https://www.netflix.com/watch/22222', timestamp: Date.now() },
+      }));
+
+      expect(mock.runtime.sendMessage).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          videoId: '22222',
+          videoTitle: 'Video Two',
+          netflixContext: expect.objectContaining({
+            title: 'Video Two',
+            confidence: 'high',
+          }),
+        })
+      );
+    });
+
+    it('returns cached metadata with high confidence from resolveMetadata', () => {
+      const mock = getChromeMock();
+      mock.runtime.sendMessage.mockResolvedValue({});
+
+      vi.stubGlobal('location', { href: 'https://www.netflix.com/watch/80012345' });
+      adapter.start();
+
+      window.dispatchEvent(new CustomEvent('nt-video-metadata', {
+        detail: {
+          videoId: '80012345',
+          title: 'High Confidence Title',
+          maturityRating: 'R',
+          genres: ['Action'],
+          source: 'metadata-response',
+          confidence: 'high',
+          timestamp: Date.now(),
+        },
+      }));
+
+      expect(mock.runtime.sendMessage).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          netflixContext: expect.objectContaining({
+            title: 'High Confidence Title',
+            maturityRating: 'R',
+            genres: ['Action'],
+            confidence: 'high',
+            source: 'metadata-response',
+          }),
+        })
+      );
+    });
+
+    it('falls back to DOM extraction when cached metadata becomes stale after 30 seconds', () => {
+      const mock = getChromeMock();
+      mock.runtime.sendMessage.mockResolvedValue({});
+      document.title = 'DOM Fallback Title - Netflix';
+
+      vi.stubGlobal('location', { href: 'https://www.netflix.com/browse' });
+      adapter.start();
+
+      window.dispatchEvent(new CustomEvent('nt-video-metadata', {
+        detail: {
+          videoId: '99999',
+          title: 'Cached Title',
+          synopsis: 'Cached synopsis',
+          source: 'metadata-response',
+          confidence: 'high',
+          timestamp: Date.now(),
+        },
+      }));
+
+      vi.advanceTimersByTime(31_000);
+
+      window.dispatchEvent(new CustomEvent('nt-url-changed', {
+        detail: { url: 'https://www.netflix.com/watch/99999', timestamp: Date.now() },
+      }));
+
+      expect(mock.runtime.sendMessage).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          videoId: '99999',
+          netflixContext: expect.objectContaining({
+            title: 'DOM Fallback Title',
+            confidence: 'low',
+            source: 'document-title',
+          }),
+        })
+      );
+    });
+
+    it('does not require Netflix-specific DOM elements for metadata resolution', () => {
+      const mock = getChromeMock();
+      mock.runtime.sendMessage.mockResolvedValue({});
+
+      document.body.innerHTML = '<div class="watch-video"><h1 data-uia="video-title">Wrong Title</h1></div><div class="player-timedtext">Subtitles</div>';
+      document.title = '';
+
+      vi.stubGlobal('location', { href: 'https://www.netflix.com/watch/80012345' });
+      adapter.start();
+
+      window.dispatchEvent(new CustomEvent('nt-video-metadata', {
+        detail: {
+          videoId: '80012345',
+          title: 'Title from Intercepted Event',
+          synopsis: 'Synopsis from event',
+          source: 'metadata-response',
+          confidence: 'high',
+          timestamp: Date.now(),
+        },
+      }));
+
+      expect(mock.runtime.sendMessage).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          videoTitle: 'Title from Intercepted Event',
+          netflixContext: expect.objectContaining({
+            title: 'Title from Intercepted Event',
+            confidence: 'high',
+          }),
+        })
+      );
+
+      const lastCall = mock.runtime.sendMessage.mock.calls.at(-1)?.[0] as any;
+      expect(lastCall.netflixContext.title).not.toBe('Wrong Title');
+    });
+
+    it('continues retrying metadata even when videoId is used as fallback videoTitle', () => {
+      const mock = getChromeMock();
+      mock.runtime.sendMessage.mockResolvedValue({});
+      document.title = '';
+
+      vi.stubGlobal('location', { href: 'https://www.netflix.com/watch/80012345' });
+      adapter.start();
+
+      vi.advanceTimersByTime(1000);
+
+      const callsWithTitle = mock.runtime.sendMessage.mock.calls.filter(
+        (call: any[]) => call[0]?.type === 'VIDEO_DETECTED'
+      );
+      const callsWithVideoIdFallback = callsWithTitle.filter(
+        (call: any[]) => call[0]?.videoTitle === '80012345'
+      );
+      expect(callsWithVideoIdFallback.length).toBeGreaterThan(0);
+
+      window.dispatchEvent(new CustomEvent('nt-video-metadata', {
+        detail: {
+          videoId: '80012345',
+          title: 'Real Title Arrives Late',
+          source: 'metadata-response',
+          confidence: 'high',
+          timestamp: Date.now(),
+        },
+      }));
+
+      expect(mock.runtime.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          videoTitle: 'Real Title Arrives Late',
+          netflixContext: expect.objectContaining({
+            title: 'Real Title Arrives Late',
+            confidence: 'high',
+          }),
+        })
+      );
     });
   });
 });
