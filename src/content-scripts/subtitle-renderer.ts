@@ -160,10 +160,23 @@ export class SubtitleRenderer {
     }
   }
 
+  private refitCurrentSegment(): void {
+    if (!this.enabled || !this.overlay || !this.videoElement || !this.measureFn) return;
+    if (this.currentSegmentId === null) return;
+
+    const segment = this.segments.find(s => s.id === this.currentSegmentId);
+    if (!segment) return;
+
+    const videoRect = this.videoElement.getBoundingClientRect();
+    const fitResult = fitToArea(segment.translatedText, this.appearanceConfig, videoRect, this.measureFn);
+    this.overlay.style.fontSize = `${fitResult.fontSize}px`;
+  }
+
   private setupResizeObserver(): void {
     if (!this.videoElement) return;
     this.resizeObserver = new ResizeObserver(() => {
       this.updateOverlayPosition();
+      this.refitCurrentSegment();
     });
     this.resizeObserver.observe(this.videoElement);
   }
@@ -195,6 +208,7 @@ export class SubtitleRenderer {
       document.body.appendChild(this.overlay);
     }
     this.updateOverlayPosition();
+    this.refitCurrentSegment();
   }
 
   private injectNativeSubtitleHidingStyle(): void {

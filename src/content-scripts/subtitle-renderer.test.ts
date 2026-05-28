@@ -468,5 +468,59 @@ describe('SubtitleRenderer', () => {
       expect(overlay.style.fontSize).toBe('20px');
       expect(renderer.isEnabled()).toBe(true);
     });
+
+    it('re-fits current segment font size on video resize', () => {
+      const segments = [
+        { id: 'seg_0', startMs: 0, endMs: 5000, translatedText: 'Hello' },
+      ];
+
+      renderer.enable(segments);
+
+      const overlay = document.querySelector('.nt-subtitle-overlay') as HTMLDivElement;
+
+      video.currentTime = 2;
+      video.dispatchEvent(new Event('timeupdate'));
+      expect(overlay.style.opacity).toBe('1');
+
+      container.style.width = '600px';
+      video.dispatchEvent(new Event('resize'));
+
+      const fontSizeAfterResize = overlay.style.fontSize;
+      expect(fontSizeAfterResize).not.toBe('');
+    });
+
+    it('re-fits current segment font size on fullscreen change', () => {
+      const segments = [
+        { id: 'seg_0', startMs: 0, endMs: 5000, translatedText: 'Hello' },
+      ];
+
+      renderer.enable(segments);
+
+      const overlay = document.querySelector('.nt-subtitle-overlay') as HTMLDivElement;
+
+      video.currentTime = 2;
+      video.dispatchEvent(new Event('timeupdate'));
+
+      const fullscreenContainer = document.createElement('div');
+      fullscreenContainer.id = 'fullscreen-container';
+      document.body.appendChild(fullscreenContainer);
+
+      Object.defineProperty(document, 'fullscreenElement', {
+        value: fullscreenContainer,
+        configurable: true,
+      });
+
+      document.dispatchEvent(new Event('fullscreenchange'));
+
+      expect(overlay.parentElement).toBe(fullscreenContainer);
+      expect(overlay.style.fontSize).not.toBe('');
+
+      Object.defineProperty(document, 'fullscreenElement', {
+        value: null,
+        configurable: true,
+      });
+
+      fullscreenContainer.remove();
+    });
   });
 });
