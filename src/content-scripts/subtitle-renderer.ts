@@ -1,3 +1,14 @@
+import type { SubtitleAppearanceConfig } from '../shared/types';
+import { DEFAULT_APPEARANCE_CONFIG } from '../shared/types';
+import { normalizeAppearanceConfig } from '../shared/appearance-config';
+import {
+  computeOverlayStyle,
+  computeOverlayCSS,
+  fitToArea,
+} from '../shared/subtitle-fit';
+import type { MeasureFn } from '../shared/subtitle-fit';
+import { createDomMeasurer } from '../shared/dom-measurer';
+
 export interface RenderedSegment {
   id: string;
   startMs: number;
@@ -11,6 +22,8 @@ export class SubtitleRenderer {
   private segments: RenderedSegment[] = [];
   private currentSegmentId: string | null = null;
   private enabled = false;
+  private appearanceConfig: SubtitleAppearanceConfig = { ...DEFAULT_APPEARANCE_CONFIG };
+  private measureFn: MeasureFn | null = null;
 
   private timeUpdateHandler: (() => void) | null = null;
   private playHandler: (() => void) | null = null;
@@ -30,7 +43,11 @@ export class SubtitleRenderer {
     }
   `;
 
-  enable(segments: RenderedSegment[]): void {
+  enable(segments: RenderedSegment[], appearanceConfig?: SubtitleAppearanceConfig): void {
+    if (appearanceConfig) {
+      this.appearanceConfig = normalizeAppearanceConfig(appearanceConfig);
+    }
+
     this.segments = segments.sort((a, b) => a.startMs - b.startMs);
 
     if (this.enabled) {
@@ -48,6 +65,7 @@ export class SubtitleRenderer {
     }
 
     this.enabled = true;
+    this.measureFn = createDomMeasurer();
     this.findVideoElement();
     this.createOverlay();
     this.attachVideoListeners();
@@ -60,6 +78,7 @@ export class SubtitleRenderer {
   disable(): void {
     this.enabled = false;
     this.currentSegmentId = null;
+    this.measureFn = null;
     this.removeOverlay();
     this.detachVideoListeners();
     this.teardownResizeObserver();
@@ -79,6 +98,20 @@ export class SubtitleRenderer {
     }
   }
 
+  updateStyle(config: SubtitleAppearanceConfig): void {
+    this.appearanceConfig = normalizeAppearanceConfig(config);
+    if (this.enabled && this.overlay && this.videoElement && this.measureFn) {
+      this.updateOverlayPosition();
+      const currentTimeMs = this.videoElement.currentTime * 1000;
+      const segment = this.findSegmentAtTime(currentTimeMs);
+      if (segment) {
+        const videoRect = this.videoElement.getBoundingClientRect();
+        const fitResult = fitToArea(segment.translatedText, this.appearanceConfig, videoRect, this.measureFn);
+        this.overlay.style.fontSize = `${fitResult.fontSize}px`;
+      }
+    }
+  }
+
   destroy(): void {
     this.disable();
     this.videoElement = null;
@@ -94,33 +127,12 @@ export class SubtitleRenderer {
 
     this.overlay = document.createElement('div');
     this.overlay.className = 'nt-subtitle-overlay';
-    this.overlay.style.cssText = `
-      position: fixed;
-      left: 50%;
-      bottom: 12%;
-      transform: translateX(-50%);
-      max-width: 80%;
-      text-align: center;
-      pointer-events: none;
-      z-index: 9999;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-      font-size: 24px;
-      font-weight: 500;
-      color: #ffffff;
-      text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8), 0 0 4px rgba(0, 0, 0, 0.6);
-      line-height: 1.4;
-      white-space: pre-wrap;
-      word-break: break-word;
-      padding: 8px 16px;
-      background: transparent;
-      border-radius: 4px;
-      transition: opacity 0.2s ease;
-      opacity: 0;
-    `;
 
     const target = document.fullscreenElement || document.body;
     target.appendChild(this.overlay);
     this.updateOverlayPosition();
+    this.overlay.style.fontSize = `${this.appearanceConfig.fontSize}px`;
+    this.overlay.style.opacity = '0';
   }
 
   private removeOverlay(): void {
@@ -132,12 +144,20 @@ export class SubtitleRenderer {
 
   private updateOverlayPosition(): void {
     if (!this.overlay || !this.videoElement) return;
-    const rect = this.videoElement.getBoundingClientRect();
-    this.overlay.style.position = 'fixed';
-    this.overlay.style.left = `${rect.left + rect.width / 2}px`;
-    this.overlay.style.bottom = `${window.innerHeight - rect.bottom + rect.height * 0.12}px`;
-    this.overlay.style.maxWidth = `${rect.width * 0.8}px`;
-    this.overlay.style.transform = 'translateX(-50%)';
+    const videoRect = this.videoElement.getBoundingClientRect();
+    const styleResult = computeOverlayStyle(this.appearanceConfig, videoRect);
+    const cssProps = computeOverlayCSS(styleResult, videoRect);
+
+    if (styleResult.placement === 'top') {
+      this.overlay.style.removeProperty('bottom');
+    } else {
+      this.overlay.style.removeProperty('top');
+    }
+
+    for (const [key, value] of Object.entries(cssProps)) {
+      if (key === 'opacity' || key === 'font-size') continue;
+      this.overlay.style.setProperty(key, value);
+    }
   }
 
   private setupResizeObserver(): void {
@@ -241,6 +261,11 @@ export class SubtitleRenderer {
         this.currentSegmentId = segment.id;
         this.overlay.textContent = segment.translatedText;
         this.overlay.style.opacity = '1';
+        if (this.measureFn) {
+          const videoRect = this.videoElement.getBoundingClientRect();
+          const fitResult = fitToArea(segment.translatedText, this.appearanceConfig, videoRect, this.measureFn);
+          this.overlay.style.fontSize = `${fitResult.fontSize}px`;
+        }
       }
     } else {
       this.currentSegmentId = null;

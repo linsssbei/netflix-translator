@@ -1,5 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { SubtitleRenderer } from './subtitle-renderer';
+import type { SubtitleAppearanceConfig } from '../shared/types';
+import { DEFAULT_APPEARANCE_CONFIG } from '../shared/types';
 
 describe('SubtitleRenderer', () => {
   let renderer: SubtitleRenderer;
@@ -345,5 +347,126 @@ describe('SubtitleRenderer', () => {
     newVideo.currentTime = 2;
     newVideo.dispatchEvent(new Event('timeupdate'));
     expect(overlay.textContent).toBe('Second');
+  });
+
+  describe('appearance config', () => {
+    it('uses default font size when enable is called without config', () => {
+      const segments = [
+        { id: 'seg_0', startMs: 0, endMs: 5000, translatedText: 'Hello' },
+      ];
+
+      renderer.enable(segments);
+      const overlay = document.querySelector('.nt-subtitle-overlay') as HTMLDivElement;
+
+      expect(overlay.style.fontSize).toBe(`${DEFAULT_APPEARANCE_CONFIG.fontSize}px`);
+    });
+
+    it('uses custom font size when config is provided', () => {
+      const segments = [
+        { id: 'seg_0', startMs: 0, endMs: 5000, translatedText: 'Hello' },
+      ];
+      const config: SubtitleAppearanceConfig = {
+        ...DEFAULT_APPEARANCE_CONFIG,
+        fontSize: 32,
+      };
+
+      renderer.enable(segments, config);
+      const overlay = document.querySelector('.nt-subtitle-overlay') as HTMLDivElement;
+
+      expect(overlay.style.fontSize).toBe('32px');
+    });
+
+    it('positions overlay at bottom by default', () => {
+      const segments = [
+        { id: 'seg_0', startMs: 0, endMs: 5000, translatedText: 'Hello' },
+      ];
+
+      renderer.enable(segments);
+      const overlay = document.querySelector('.nt-subtitle-overlay') as HTMLDivElement;
+
+      expect(overlay.style.bottom).not.toBe('');
+      expect(overlay.style.top).toBe('');
+    });
+
+    it('positions overlay at top when placement is top', () => {
+      const segments = [
+        { id: 'seg_0', startMs: 0, endMs: 5000, translatedText: 'Hello' },
+      ];
+      const config: SubtitleAppearanceConfig = {
+        ...DEFAULT_APPEARANCE_CONFIG,
+        placement: 'top',
+      };
+
+      renderer.enable(segments, config);
+      const overlay = document.querySelector('.nt-subtitle-overlay') as HTMLDivElement;
+
+      expect(overlay.style.top).not.toBe('');
+      expect(overlay.style.bottom).toBe('');
+    });
+
+    it('updateStyle changes overlay positioning without recreating overlay', () => {
+      const segments = [
+        { id: 'seg_0', startMs: 0, endMs: 5000, translatedText: 'Hello' },
+      ];
+
+      renderer.enable(segments);
+      const overlay1 = document.querySelector('.nt-subtitle-overlay');
+
+      renderer.updateStyle({ ...DEFAULT_APPEARANCE_CONFIG, placement: 'top' });
+
+      const overlay2 = document.querySelector('.nt-subtitle-overlay');
+      expect(overlay1).toBe(overlay2);
+      expect(overlay2 instanceof HTMLDivElement && overlay2.style.top).not.toBe('');
+    });
+
+    it('updateStyle while disabled stores config for next enable', () => {
+      const segments = [
+        { id: 'seg_0', startMs: 0, endMs: 5000, translatedText: 'Hello' },
+      ];
+
+      renderer.updateStyle({ ...DEFAULT_APPEARANCE_CONFIG, fontSize: 36 });
+
+      renderer.enable(segments);
+      const overlay = document.querySelector('.nt-subtitle-overlay') as HTMLDivElement;
+
+      expect(overlay.style.fontSize).toBe('36px');
+    });
+
+    it('cleans up overlay and styles on disable after using config', () => {
+      const segments = [
+        { id: 'seg_0', startMs: 0, endMs: 5000, translatedText: 'Hello' },
+      ];
+      const config: SubtitleAppearanceConfig = {
+        ...DEFAULT_APPEARANCE_CONFIG,
+        fontSize: 28,
+      };
+
+      renderer.enable(segments, config);
+      expect(document.querySelector('.nt-subtitle-overlay')).not.toBeNull();
+
+      renderer.disable();
+      expect(document.querySelector('.nt-subtitle-overlay')).toBeNull();
+      expect(document.head.querySelector('style')).toBeNull();
+    });
+
+    it('accepts config with extra fields via normalization', () => {
+      const segments = [
+        { id: 'seg_0', startMs: 0, endMs: 5000, translatedText: 'Hello' },
+      ];
+      const config = {
+        fontSize: 20,
+        placement: 'bottom' as const,
+        areaWidthPct: 70,
+        areaHeightPct: 10,
+        offsetXPct: 0,
+        offsetYPct: 15,
+      };
+
+      renderer.enable(segments, config);
+      const overlay = document.querySelector('.nt-subtitle-overlay') as HTMLDivElement;
+
+      expect(overlay.style.fontSize).toBe('20px');
+      expect(renderer.isEnabled()).toBe(true);
+    });
   });
 });
