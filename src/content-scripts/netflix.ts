@@ -3,7 +3,7 @@
 
 import { NetflixAdapter } from './netflix-adapter';
 import { SubtitleRenderer } from './subtitle-renderer';
-import type { VideoIdentity } from '../shared/types';
+import type { VideoIdentity, SubtitleAppearanceConfig } from '../shared/types';
 
 console.log('[Netflix Translator] Content script loaded on Netflix');
 
@@ -37,10 +37,20 @@ function init(): void {
   // Listen for messages from popup/service worker
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message.type === 'TOGGLE_TRANSLATION') {
-      handleToggleTranslation(message.enabled, message.videoId, message.targetLanguage)
+      handleToggleTranslation(message.enabled, message.videoId, message.targetLanguage, message.appearanceConfig)
         .then(() => sendResponse({ status: 'ok' }))
         .catch((err) => sendResponse({ status: 'error', message: err.message }));
       return true; // Async
+    }
+
+    if (message.type === 'UPDATE_SUBTITLE_STYLE') {
+      if (renderer.isEnabled()) {
+        renderer.updateStyle(message.config);
+        sendResponse({ status: 'ok' });
+      } else {
+        sendResponse({ status: 'ok', note: 'renderer_disabled' });
+      }
+      return true;
     }
 
     if (message.type === 'GET_RENDERING_STATUS') {
@@ -59,7 +69,8 @@ function init(): void {
 async function handleToggleTranslation(
   enabled: boolean,
   videoId: string,
-  targetLanguage: string
+  targetLanguage: string,
+  appearanceConfig?: SubtitleAppearanceConfig
 ): Promise<void> {
   if (!enabled) {
     renderer.disable();
@@ -74,7 +85,7 @@ async function handleToggleTranslation(
     return;
   }
 
-  renderer.enable(segments);
+  renderer.enable(segments, appearanceConfig);
   console.log(`[Netflix Translator] Translation rendering enabled with ${segments.length} segments`);
 }
 

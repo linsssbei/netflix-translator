@@ -356,6 +356,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
               enabled: message.enabled,
               videoId: message.videoId,
               targetLanguage: message.targetLanguage,
+              appearanceConfig: message.appearanceConfig,
             });
           } catch {
             // Tab may not have content script, ignore
@@ -365,6 +366,26 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
       sendResponse({ status: 'ok' });
     })().catch((err) => sendResponse({ status: 'error', message: err.message }));
+    return true;
+  }
+
+  if (message.type === 'UPDATE_SUBTITLE_STYLE') {
+    (async () => {
+      const tabs = await chrome.tabs.query({ url: '*://*.netflix.com/*' });
+      for (const tab of tabs) {
+        if (tab.id) {
+          try {
+            await chrome.tabs.sendMessage(tab.id, {
+              type: 'UPDATE_SUBTITLE_STYLE',
+              config: message.config,
+            });
+          } catch {
+            // Tab may not have content script, ignore
+          }
+        }
+      }
+      sendResponse({ status: 'ok' });
+    })();
     return true;
   }
 

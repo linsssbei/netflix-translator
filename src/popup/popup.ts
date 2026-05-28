@@ -86,6 +86,7 @@ document.addEventListener('DOMContentLoaded', () => {
       config.areaHeightPct = newHeightPct;
       saveAppearanceConfig(config).then((saved) => {
         renderPreview(saved);
+        sendStyleUpdate(saved);
       });
     });
   });
@@ -190,6 +191,7 @@ document.addEventListener('DOMContentLoaded', () => {
     config.fontSize = Number(fontSizeSelect.value);
     const saved = await saveAppearanceConfig(config);
     renderPreview(saved);
+    sendStyleUpdate(saved);
   });
 
   placementSelect.addEventListener('change', async () => {
@@ -197,6 +199,7 @@ document.addEventListener('DOMContentLoaded', () => {
     config.placement = placementSelect.value as SubtitleAppearanceConfig['placement'];
     const saved = await saveAppearanceConfig(config);
     renderPreview(saved);
+    sendStyleUpdate(saved);
   });
 
   prepareBtn.addEventListener('click', () => {
@@ -285,25 +288,46 @@ document.addEventListener('DOMContentLoaded', () => {
     );
   }
 
+  let styleDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function sendStyleUpdate(config: SubtitleAppearanceConfig) {
+    if (styleDebounceTimer) clearTimeout(styleDebounceTimer);
+    styleDebounceTimer = setTimeout(() => {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        const activeTab = tabs[0];
+        if (!activeTab?.id) return;
+        chrome.tabs.sendMessage(activeTab.id, {
+          type: 'UPDATE_SUBTITLE_STYLE',
+          config,
+        }, () => {
+          if (chrome.runtime.lastError) { /* ignore */ }
+        });
+      });
+    }, 100);
+  }
+
   function toggleTranslation(enabled: boolean) {
     translationEnabled = enabled;
     const targetLanguage = targetLangSelect.value;
 
-    chrome.runtime.sendMessage(
-      {
-        type: 'TOGGLE_TRANSLATION',
-        enabled,
-        videoId: currentVideoId,
-        targetLanguage,
-      },
-      () => {
-        if (chrome.runtime.lastError) {
-          console.error('Toggle error:', chrome.runtime.lastError.message);
-          return;
+    loadAppearanceConfig().then((appearanceConfig) => {
+      chrome.runtime.sendMessage(
+        {
+          type: 'TOGGLE_TRANSLATION',
+          enabled,
+          videoId: currentVideoId,
+          targetLanguage,
+          appearanceConfig,
+        },
+        () => {
+          if (chrome.runtime.lastError) {
+            console.error('Toggle error:', chrome.runtime.lastError.message);
+            return;
+          }
+          updateToggleButton();
         }
-        updateToggleButton();
-      }
-    );
+      );
+    });
   }
 
   function checkRenderingStatus() {
