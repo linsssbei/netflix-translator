@@ -102,6 +102,7 @@ export function computeOverlayCSS(
     [topOrBottomProp]: `${verticalOffset}px`,
     transform: 'translateX(-50%)',
     'max-width': `${style.maxWidthPx}px`,
+    'max-height': `${style.overlayHeightPx}px`,
     'font-size': `${style.fontSize}px`,
     'text-align': 'center',
     'pointer-events': 'none',

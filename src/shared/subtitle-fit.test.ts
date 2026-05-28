@@ -267,6 +267,15 @@ describe('computeOverlayCSS', () => {
     expect(css['word-break']).toBe('break-word');
     expect(css.overflow).toBe('hidden');
   });
+
+  it('includes max-height based on overlayHeightPx', () => {
+    const config = makeConfig({ areaHeightPct: 25, fontSize: 24 });
+    const rect = makeRect({ width: 800, height: 450 });
+    const style = computeOverlayStyle(config, rect);
+    const css = computeOverlayCSS(style, rect);
+
+    expect(css['max-height']).toBe(`${style.overlayHeightPx}px`);
+  });
 });
 
 describe('constants', () => {

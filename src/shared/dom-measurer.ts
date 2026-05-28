@@ -10,6 +10,7 @@ function getOrCreateMeasurer(): HTMLSpanElement {
   span.style.cssText = `
     position: absolute;
     visibility: hidden;
+    display: inline-block;
     white-space: pre-wrap;
     word-break: break-word;
     line-height: ${SUBTITLE_LINE_HEIGHT};

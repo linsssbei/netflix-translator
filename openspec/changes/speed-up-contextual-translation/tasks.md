@@ -37,4 +37,4 @@
 - [x] 5.3 Add tests for out-of-order completion and final sorted artifact output
 - [x] 5.4 Add tests for one failed batch preserving successful validated segments without readiness
 - [x] 5.5 Run `npm test` and `npm run lint`
-- [ ] 5.6 Optionally run live provider testing with a small fixture and explicit environment variables
+- [x] 5.6 Optionally run live provider testing with a small fixture and explicit environment variables

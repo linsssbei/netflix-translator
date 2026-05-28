@@ -1,6 +1,7 @@
 import { SubtitleAppearanceConfig } from '../shared/types';
 import { loadAppearanceConfig, saveAppearanceConfig } from '../shared/appearance-config';
-import { percentToPixels, pixelsToPercent, SUBTITLE_FONT_FAMILY, SUBTITLE_LINE_HEIGHT } from '../shared/subtitle-fit';
+import { percentToPixels, pixelsToPercent, SUBTITLE_FONT_FAMILY, SUBTITLE_LINE_HEIGHT, fitToArea } from '../shared/subtitle-fit';
+import { createDomMeasurer } from '../shared/dom-measurer';
 
 export const PREVIEW_SAMPLE_TEXT = 'Sample subtitle text for preview';
 export const PREVIEW_MIN_HEIGHT_PX = 80;
@@ -100,8 +101,12 @@ document.addEventListener('DOMContentLoaded', () => {
     previewText.textContent = PREVIEW_SAMPLE_TEXT;
     previewText.style.fontFamily = SUBTITLE_FONT_FAMILY;
     previewText.style.lineHeight = String(SUBTITLE_LINE_HEIGHT);
-    previewText.style.fontSize = `${style.fontSize}px`;
     previewText.style.maxWidth = `${style.maxWidthPx}px`;
+
+    const videoRect = { width: containerWidth, height: containerWidth * 9 / 16, x: 0, y: 0, left: 0, right: containerWidth, top: 0, bottom: containerWidth * 9 / 16, toJSON: () => ({}) } as DOMRect;
+    const measureFn = createDomMeasurer();
+    const fitResult = fitToArea(PREVIEW_SAMPLE_TEXT, config, videoRect, measureFn);
+    previewText.style.fontSize = `${fitResult.fontSize}px`;
 
     if (style.placement === 'top') {
       previewText.style.top = '0';
@@ -113,6 +118,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const clampedHeight = clampPreviewHeight(style.heightPx);
     previewContainer.style.height = `${clampedHeight}px`;
+    previewText.style.maxHeight = `${clampedHeight}px`;
+    previewText.style.overflow = 'hidden';
   }
 
   // Diagnostics elements
@@ -170,6 +177,13 @@ document.addEventListener('DOMContentLoaded', () => {
       checkRenderingStatus();
     } else if (url.includes('netflix.com')) {
       statusEl.textContent = 'Navigate to a video';
+      appearanceEl.classList.remove('hidden');
+
+      loadAppearanceConfig().then((config) => {
+        fontSizeSelect.value = String(config.fontSize);
+        placementSelect.value = config.placement;
+        renderPreview(config);
+      });
     } else {
       statusEl.textContent = 'Not on Netflix';
     }
