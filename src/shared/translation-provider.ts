@@ -1,6 +1,4 @@
 import { generateObject, type LanguageModel } from 'ai';
-import { createDeepSeek } from '@ai-sdk/deepseek';
-import { createOpenAI } from '@ai-sdk/openai';
 import { z } from 'zod';
 import type { CleanedTranslationInput, TranslationDebugInfo, TranslationContextProfile } from './types';
 
@@ -46,57 +44,6 @@ export interface ContextPolicy {
   contextAfterCount: number;
   /** Optional capped summary of prior validated translations */
   priorTranslationSummary?: string;
-}
-
-/**
- * Provider configuration for creating AI SDK models
- */
-export interface AIProviderConfig {
-  apiKey: string;
-  provider: 'deepseek' | 'openai' | 'custom';
-  endpoint?: string;
-  model?: string;
-}
-
-/**
- * Default provider configurations
- */
-const DEFAULT_CONFIGS: Record<string, { endpoint: string; model: string }> = {
-  deepseek: {
-    endpoint: 'https://api.deepseek.com/v1',
-    model: 'deepseek-chat',
-  },
-  openai: {
-    endpoint: 'https://api.openai.com/v1',
-    model: 'gpt-4o',
-  },
-};
-
-/**
- * Create an AI SDK language model from provider configuration
- */
-export function createLanguageModel(config: AIProviderConfig): LanguageModel {
-  const defaults = DEFAULT_CONFIGS[config.provider] || DEFAULT_CONFIGS.openai;
-
-  switch (config.provider) {
-    case 'deepseek': {
-      const provider = createDeepSeek({
-        apiKey: config.apiKey,
-        baseURL: config.endpoint || defaults.endpoint,
-      });
-      return provider(config.model || defaults.model);
-    }
-    case 'openai':
-    case 'custom': {
-      const provider = createOpenAI({
-        apiKey: config.apiKey,
-        baseURL: config.endpoint || defaults.endpoint,
-      });
-      return provider(config.model || defaults.model);
-    }
-    default:
-      throw new Error(`Unsupported provider: ${config.provider}`);
-  }
 }
 
 /**

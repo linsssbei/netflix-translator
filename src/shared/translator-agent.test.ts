@@ -247,11 +247,10 @@ describe('prepareTranslation', () => {
 
     const artifact = await prepareTranslation(
       mockInput,
-      { apiKey: 'test-key' },
+      { apiKey: 'test-key', provider: 'openai' as const },
       '12345',
       'en',
       'abc123hash',
-      'openai'
     );
 
     expect(artifact.videoId).toBe('12345');
@@ -309,7 +308,6 @@ describe('prepareTranslation', () => {
       '12345',
       'en',
       'abc123hash',
-      'deepseek'
     );
 
     // 150 segments / 100 per batch = 2 batches
@@ -371,7 +369,6 @@ describe('prepareTranslation', () => {
         '12345',
         'en',
         'abc123hash',
-        'deepseek'
       );
       expect.fail('Should have thrown');
     } catch (err) {
@@ -427,7 +424,6 @@ describe('prepareTranslation', () => {
       '12345',
       'en',
       'abc123hash',
-      'deepseek',
       undefined,
       (segments, progress) => {
         batchCompletions.push({ segments: segments.length, progress });
@@ -458,7 +454,6 @@ describe('prepareTranslation', () => {
       '12345',
       'en',
       'abc123hash',
-      'deepseek',
       (debug) => {
         debugRecords.push(debug);
       }
@@ -526,7 +521,6 @@ describe('prepareTranslation', () => {
         '12345',
         'en',
         'abc123hash',
-        'deepseek'
       );
       expect.fail('Should have thrown');
     } catch (err) {
@@ -547,7 +541,6 @@ describe('prepareTranslation', () => {
         '12345',
         'en',
         'abc123',
-        'openai'
       );
       expect.fail('Should have thrown');
     } catch (err) {
@@ -572,7 +565,6 @@ describe('prepareTranslation', () => {
       '12345',
       'en',
       'abc123',
-      'openai'
     );
 
     expect(vi.mocked(generateObject)).toHaveBeenCalledTimes(2);
@@ -595,7 +587,6 @@ describe('prepareTranslation', () => {
       '12345',
       'en',
       'abc123hash',
-      'deepseek',
       undefined,
       undefined,
       {
@@ -659,7 +650,6 @@ describe('prepareTranslation', () => {
       '12345',
       'en',
       'abc123hash',
-      'deepseek',
       undefined,
       undefined,
       {
@@ -695,7 +685,6 @@ describe('prepareTranslation', () => {
       '12345',
       'en',
       'abc123hash',
-      'deepseek',
       undefined,
       undefined,
       {
@@ -745,7 +734,6 @@ describe('prepareTranslation', () => {
       '12345',
       'en',
       'abc123hash',
-      'deepseek'
     );
 
     expect(artifact.segments).toHaveLength(3);
@@ -799,7 +787,6 @@ describe('prepareTranslation', () => {
         '12345',
         'en',
         'abc123hash',
-        'deepseek'
       );
       expect.fail('Should have thrown');
     } catch (err) {
@@ -828,7 +815,6 @@ describe('prepareTranslation', () => {
         '12345',
         'en',
         'abc123hash',
-        'deepseek',
         undefined,
         (segments, progress) => {
           batchCompletions.push({
@@ -863,7 +849,6 @@ describe('prepareTranslation', () => {
         '12345',
         'en',
         'abc123hash',
-        'deepseek'
       );
       expect.fail('Should have thrown');
     } catch (err) {

@@ -12,6 +12,14 @@ vi.mock('@ai-sdk/openai', () => ({
   createOpenAI: vi.fn(() => vi.fn(() => ({ modelId: 'gpt-4o' }))),
 }));
 
+vi.mock('@ai-sdk/anthropic', () => ({
+  createAnthropic: vi.fn(() => vi.fn(() => ({ modelId: 'claude-3-5-sonnet' }))),
+}));
+
+vi.mock('@ai-sdk/google', () => ({
+  createGoogleGenerativeAI: vi.fn(() => vi.fn(() => ({ modelId: 'gemini-2.0-flash' }))),
+}));
+
 import { performAutoFill } from '../shared/auto-fill';
 import { generateObject } from 'ai';
 
@@ -20,7 +28,7 @@ describe('Auto-fill', () => {
     vi.restoreAllMocks();
   });
 
-  it('returns structured profile suggestions from provider', async () => {
+  it('returns structured profile suggestions from DeepSeek provider', async () => {
     vi.mocked(generateObject).mockResolvedValue({
       object: {
         tone: 'Casual and humorous',
@@ -45,8 +53,7 @@ describe('Auto-fill', () => {
       'Time Travel Adventure',
       'ja',
       'en',
-      'test-api-key',
-      'deepseek'
+      { apiKey: 'test-api-key', provider: 'deepseek' }
     );
 
     expect(result.tone).toBe('Casual and humorous');
@@ -62,7 +69,7 @@ describe('Auto-fill', () => {
     vi.mocked(generateObject).mockRejectedValue(new Error('API rate limit exceeded'));
 
     await expect(
-      performAutoFill('12345', undefined, 'en', 'zh-CN', 'test-key', 'openai')
+      performAutoFill('12345', undefined, 'en', 'zh-CN', { apiKey: 'test-key', provider: 'openai' })
     ).rejects.toThrow('API rate limit exceeded');
   });
 
@@ -78,7 +85,7 @@ describe('Auto-fill', () => {
       usage: { inputTokens: 50, outputTokens: 20 },
     } as any);
 
-    await performAutoFill('12345', 'Breaking Bad', 'en', 'es', 'test-key', 'openai');
+    await performAutoFill('12345', 'Breaking Bad', 'en', 'es', { apiKey: 'test-key', provider: 'openai' });
 
     const callArgs = vi.mocked(generateObject).mock.calls[0][0] as any;
     expect(callArgs.prompt).toContain('Breaking Bad');
@@ -101,10 +108,7 @@ describe('Auto-fill', () => {
       'My Show',
       'en',
       'zh-CN',
-      'test-key',
-      'deepseek',
-      undefined,
-      undefined,
+      { apiKey: 'test-key', provider: 'deepseek' },
       {
         synopsis: 'A Netflix-provided synopsis.',
         maturityRating: 'TV-14',
@@ -128,7 +132,7 @@ describe('Auto-fill', () => {
       usage: { inputTokens: 50, outputTokens: 20 },
     } as any);
 
-    await performAutoFill('99999', undefined, 'en', 'zh-CN', 'test-key', 'deepseek');
+    await performAutoFill('99999', undefined, 'en', 'zh-CN', { apiKey: 'test-key', provider: 'deepseek' });
 
     const callArgs = vi.mocked(generateObject).mock.calls[0][0] as any;
     expect(callArgs.prompt).toContain('99999');

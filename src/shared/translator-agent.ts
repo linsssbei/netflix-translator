@@ -8,16 +8,15 @@ import type {
   TranslationContextProfile,
 } from './types';
 import {
-  createLanguageModel,
   callAISDKProvider,
   buildDefaultStyleProfile,
-  type AIProviderConfig,
   type TranslationStyleProfile,
   type ContextPolicy,
   type RawTranslatedSegment,
   type ProviderBatchResult,
   type OnStreamProgress,
 } from './translation-provider';
+import { createLanguageModel, resolveProviderConfig } from './provider-factory';
 
 export interface ProviderConfig {
   apiKey: string;
@@ -25,11 +24,6 @@ export interface ProviderConfig {
   endpoint?: string;
   model?: string;
 }
-
-export const DEFAULT_PROVIDER_CONFIG: Pick<Required<ProviderConfig>, 'endpoint' | 'model'> = {
-  endpoint: 'https://api.deepseek.com/v1/chat/completions',
-  model: 'deepseek-v4-pro',
-};
 
 const TRANSLATION_BATCH_SIZE = 100;
 const DEFAULT_CONTEXT_BEFORE = 20;
@@ -220,25 +214,6 @@ export type OnBatchComplete = (
   progress: TranslationProgressInfo
 ) => void | Promise<void>;
 
-function resolveProviderType(config: ProviderConfig): 'deepseek' | 'openai' | 'custom' {
-  if (config.provider === 'deepseek' || config.provider === 'openai') {
-    return config.provider;
-  }
-  const endpoint = config.endpoint || DEFAULT_PROVIDER_CONFIG.endpoint;
-  if (endpoint.includes('deepseek')) return 'deepseek';
-  if (endpoint.includes('openai')) return 'openai';
-  return 'custom';
-}
-
-function toAIProviderConfig(config: ProviderConfig): AIProviderConfig {
-  return {
-    apiKey: config.apiKey,
-    provider: resolveProviderType(config),
-    endpoint: config.endpoint,
-    model: config.model,
-  };
-}
-
 export interface ParallelBatchResult {
   batchIndex: number;
   batchNumber: number;
@@ -394,7 +369,6 @@ export async function prepareTranslation(
   videoId: string,
   sourceLanguage: string,
   sourceSubtitleHash: string,
-  provider: TranslationProvider,
   onDebug?: (debug: TranslationDebugInfo) => void | Promise<void>,
   onBatchComplete?: OnBatchComplete,
   options?: {
@@ -405,8 +379,10 @@ export async function prepareTranslation(
     maxConcurrency?: number;
   }
 ): Promise<TranslatedArtifact> {
-  const aiConfig = toAIProviderConfig(config);
-  const model = createLanguageModel(aiConfig);
+  const resolved = resolveProviderConfig(config);
+  const model = createLanguageModel(resolved);
+  const resolvedProvider = resolved.providerId as TranslationProvider;
+  const resolvedModel = resolved.model;
   const styleProfile = options?.styleProfile || buildDefaultStyleProfile(input.targetLanguage);
   const contextBeforeCount = options?.contextPolicy?.contextBeforeCount ?? DEFAULT_CONTEXT_BEFORE;
   const contextAfterCount = options?.contextPolicy?.contextAfterCount ?? DEFAULT_CONTEXT_AFTER;
@@ -420,10 +396,11 @@ export async function prepareTranslation(
   const totalSegments = input.segments.length;
   const batches = planBatches(input.segments, TRANSLATION_BATCH_SIZE, contextBeforeCount, contextAfterCount);
   const totalBatches = batches.length;
-  const modelId = typeof model === 'string' ? model : (model as { modelId?: string }).modelId || aiConfig.model || 'unknown';
+  const modelId = typeof model === 'string' ? model : (model as { modelId?: string }).modelId || resolvedModel || 'unknown';
+
 
   console.log(
-    `[Translator Agent] Starting parallel batch translation: segments=${totalSegments}, batches=${totalBatches}, batchSize=${TRANSLATION_BATCH_SIZE}, concurrency=${maxConcurrency}, provider=${aiConfig.provider}`
+    `[Translator Agent] Starting parallel batch translation: segments=${totalSegments}, batches=${totalBatches}, batchSize=${TRANSLATION_BATCH_SIZE}, concurrency=${maxConcurrency}, provider=${resolvedProvider}`
   );
 
   const allValidatedSegments: TranslatedSegment[] = [];
@@ -454,7 +431,7 @@ export async function prepareTranslation(
       totalBatches,
       totalSegments,
       videoId,
-      provider,
+      resolvedProvider,
       onDebug,
       options?.onStreamProgress,
       options?.contextProfile
@@ -531,7 +508,8 @@ export async function prepareTranslation(
     targetLanguage: input.targetLanguage,
     sourceSubtitleHash,
     preparedAt: Date.now(),
-    provider,
+    provider: resolvedProvider as TranslationProvider,
+    model: resolvedModel,
     segments: sortedSegments,
   };
 }

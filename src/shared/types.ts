@@ -104,7 +104,7 @@ export interface CleanedTranslationInput {
 /**
  * Translation provider types
  */
-export type TranslationProvider = 'deepseek' | 'openai' | 'anthropic' | 'custom';
+export type TranslationProvider = 'deepseek' | 'openai' | 'anthropic' | 'gemini' | 'openai-compatible' | 'custom';
 
 /**
  * Request to translate a batch of segments
@@ -150,6 +150,8 @@ export interface TranslatedArtifact {
   preparedAt: number;
   /** Translation provider used */
   provider: TranslationProvider;
+  /** Model used for translation */
+  model?: string;
   /** Translated segments */
   segments: TranslatedSegment[];
 }
@@ -304,6 +306,8 @@ export interface ExtensionSettings {
   provider: TranslationProvider;
   /** Provider API key */
   apiKey?: string;
+  /** Selected model name */
+  model?: string;
   /** Custom endpoint URL (for custom provider) */
   customEndpoint?: string;
 }

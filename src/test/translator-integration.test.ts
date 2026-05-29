@@ -161,7 +161,6 @@ describe('Translator Integration Tests (Chrome-Free)', () => {
         'test-video-123',
         'en',
         'fixture-hash-abc',
-        'deepseek',
         undefined,
         async (validatedSegments, progress) => {
           batchCompletions.push({ segments: validatedSegments.length, progress });
@@ -251,7 +250,6 @@ describe('Translator Integration Tests (Chrome-Free)', () => {
           'test-video-123',
           'en',
           'fixture-hash-abc',
-          'deepseek'
         )
       ).rejects.toThrow('partially failed');
     });
@@ -303,7 +301,6 @@ describe('Translator Integration Tests (Chrome-Free)', () => {
           'test-video-123',
           'en',
           'fixture-hash-abc',
-          'deepseek'
         );
         expect.fail('Should have thrown');
       } catch (err) {
@@ -343,7 +340,6 @@ describe('Translator Integration Tests (Chrome-Free)', () => {
         'test-video-123',
         'en',
         'fixture-hash-abc',
-        'deepseek',
         undefined,
         undefined,
         { styleProfile }
@@ -377,7 +373,6 @@ describe('Translator Integration Tests (Chrome-Free)', () => {
         'test-video-123',
         'en',
         'fixture-hash-abc',
-        'deepseek',
         undefined,
         undefined,
         {

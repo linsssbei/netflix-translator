@@ -24,6 +24,7 @@ import type {
 import type { ProviderConfig } from './shared/translator-agent';
 import { loadContextProfile, saveContextProfile } from './shared/context-profile';
 import { performAutoFill } from './shared/auto-fill';
+import { resolveProviderConfig } from './shared/provider-factory';
 
 const STALE_PREPARING_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -44,16 +45,6 @@ async function getProviderConfig(): Promise<ProviderConfig | null> {
   };
 }
 
-export function resolveAutoFillProviderType(config: {
-  provider?: TranslationProvider | string;
-  endpoint?: string;
-}): 'deepseek' | 'openai' {
-  if (config.endpoint?.includes('deepseek')) return 'deepseek';
-  if (config.endpoint?.includes('openai')) return 'openai';
-  if (config.provider === 'deepseek') return 'deepseek';
-  return 'openai';
-}
-
 async function translateEntry(
   entry: SubtitleLibraryEntry,
   config: ProviderConfig
@@ -61,6 +52,10 @@ async function translateEntry(
   if (!entry.sourcePayload) {
     throw new Error('No source payload available for translation');
   }
+
+  // Resolve provider config once so default model is filled even when user
+  // omitted it from settings. Used for artifact metadata below.
+  const resolvedConfig = resolveProviderConfig(config);
 
   // Load context profile for this entry
   const contextProfile = await loadContextProfile(
@@ -111,7 +106,6 @@ async function translateEntry(
       entry.videoId,
       entry.sourceLanguage,
       entry.sourceSubtitleHash,
-      'deepseek',
       async (debug) => {
         console.log('[Service Worker] Translation debug:', {
           strategy: debug.strategy,
@@ -155,14 +149,15 @@ async function translateEntry(
     finalSegments = mergeSegments(existingTranslations, artifact.segments);
   }
 
-  // Build final artifact from merged segments
+  // Build final artifact from merged segments using resolved provider/model
   const finalArtifact = {
     videoId: entry.videoId,
     sourceLanguage: entry.sourceLanguage,
     targetLanguage: entry.targetLanguage,
     sourceSubtitleHash: entry.sourceSubtitleHash,
     preparedAt: Date.now(),
-    provider: 'deepseek' as const,
+    provider: resolvedConfig.providerId as TranslationProvider,
+    model: resolvedConfig.model,
     segments: finalSegments,
   };
 
@@ -456,6 +451,10 @@ async function handlePrepareSubtitles(
     );
   }
 
+  // Validate provider config before any subtitle operations.
+  // Catches invalid provider ID, missing endpoint, missing model early.
+  resolveProviderConfig(config);
+
   // Step 1: If there's a pending subtitle for this video, save it to library now
   const pending = await getPendingSubtitle(videoId);
   if (pending) {
@@ -693,6 +692,9 @@ async function handleRetranslateSegment(message: {
     throw new Error('No API key configured');
   }
 
+  // Validate provider before any subtitle operations
+  resolveProviderConfig(config);
+
   const entry = await getLibraryEntry(
     message.videoId,
     message.sourceLanguage,
@@ -739,7 +741,9 @@ async function handleAutoFill(
     throw new Error('No API key configured. Open extension options to set your API key.');
   }
 
-  const providerType = resolveAutoFillProviderType(config);
+  // Validate provider config early
+  resolveProviderConfig(config);
+
   const entry = await getLibraryEntry(videoId, sourceLanguage, targetLanguage, sourceSubtitleHash);
   const storedContext = await getVideoContext(videoId);
   const resolvedTitle = videoTitle || entry?.videoTitle || entry?.subtitleResource?.videoTitle || storedContext?.videoTitle;
@@ -754,15 +758,12 @@ async function handleAutoFill(
       resolvedTitle,
       sourceLanguage,
       targetLanguage,
-      config.apiKey,
-      providerType,
-      config.endpoint,
-      config.model,
+      config,
       netflixContext
     );
     console.log('[Service Worker] Auto-fill context profile completed:', {
       videoId,
-      provider: providerType,
+      provider: config.provider || 'deepseek',
       titleUsed: resolvedTitle,
       characterCount: result.characterNames.length,
       glossaryCount: result.glossary.length,

@@ -1,8 +1,7 @@
 import type { AutoFillResult, NetflixVideoContext } from './types';
 import { generateObject } from 'ai';
-import { createDeepSeek } from '@ai-sdk/deepseek';
-import { createOpenAI } from '@ai-sdk/openai';
 import { z } from 'zod';
+import { createLanguageModel, resolveProviderConfig } from './provider-factory';
 
 const autoFillSchema = z.object({
   tone: z.string().describe('Suggested tone instructions for translation'),
@@ -21,32 +20,23 @@ const autoFillSchema = z.object({
   })).describe('Sources used for context gathering'),
 });
 
+export interface AutoFillConfig {
+  apiKey: string;
+  provider?: string;
+  endpoint?: string;
+  model?: string;
+}
+
 export async function performAutoFill(
   videoId: string,
   videoTitle: string | undefined,
   sourceLanguage: string,
   targetLanguage: string,
-  apiKey: string,
-  provider: string,
-  endpoint?: string,
-  model?: string,
+  config: AutoFillConfig,
   netflixContext?: NetflixVideoContext
 ): Promise<AutoFillResult> {
-  const defaults: Record<string, { endpoint: string; model: string }> = {
-    deepseek: { endpoint: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
-    openai: { endpoint: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
-  };
-
-  const defaultConfig = defaults[provider] || defaults.openai;
-
-  let languageModel;
-  if (provider === 'deepseek') {
-    const deepseek = createDeepSeek({ apiKey, baseURL: endpoint || defaultConfig.endpoint });
-    languageModel = deepseek(model || defaultConfig.model);
-  } else {
-    const openai = createOpenAI({ apiKey, baseURL: endpoint || defaultConfig.endpoint });
-    languageModel = openai(model || defaultConfig.model);
-  }
+  const resolved = resolveProviderConfig(config);
+  const languageModel = createLanguageModel(resolved);
 
   const titleInfo = videoTitle ? `titled "${videoTitle}"` : `with ID ${videoId}`;
   const netflixHints = [
